@@ -31,6 +31,8 @@ interface SavedRecipe extends GenerateRecipeOutput {
   id: string;
   dateSaved: string;
   ingredientsInput: string; // The original ingredients text used for generation
+  imageUrl?: string;
+  dataAiHint?: string;
 }
 
 export default function ScrapChefPage() {
@@ -54,7 +56,8 @@ export default function ScrapChefPage() {
 
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
-  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(true); // Set true initially for camera tab
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false); // Set false initially
+  const [cameraInitialized, setCameraInitialized] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -115,8 +118,11 @@ export default function ScrapChefPage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
+      if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
+      }
     };
-  }, [toast]);
+  }, [toast, activeStream]); // Added activeStream to dependencies for cleanup completeness
 
   useEffect(() => {
     if (inputMode !== 'voice' && isListening && recognitionRef.current) {
@@ -136,60 +142,97 @@ export default function ScrapChefPage() {
   }, [activeStream]);
 
   useEffect(() => {
-    // Only manage camera when scan mode and camera tab are active
+    let isEffectMounted = true;
+
     if (inputMode === 'scan' && scanTabActiveView === 'camera') {
-      setIsCameraLoading(true);
-      // setHasCameraPermission(false); // Reset permission status on tab switch to re-evaluate
-      
-      const getCameraPermission = async () => {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          toast({
-            variant: 'destructive',
-            title: 'Kamera Tidak Didukung',
-            description: 'Browser Anda tidak mendukung akses kamera.',
-          });
-          setHasCameraPermission(false);
-          setIsCameraLoading(false);
-          return;
-        }
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-          setActiveStream(stream);
-          setHasCameraPermission(true);
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            // Wait for video to load metadata to ensure dimensions are available
-            videoRef.current.onloadedmetadata = () => {
-              setIsCameraLoading(false); // Camera is ready once metadata is loaded
-            };
-          } else {
-            setIsCameraLoading(false); // videoRef not available
+      if (!cameraInitialized && !activeStream) { // Only initialize if not already done and no active stream
+        setIsCameraLoading(true);
+        setHasCameraPermission(false); // Reset permission status
+
+        const getCameraPermissionInternal = async () => {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            if (isEffectMounted) {
+              toast({
+                variant: 'destructive',
+                title: 'Kamera Tidak Didukung',
+                description: 'Browser Anda tidak mendukung akses kamera.',
+              });
+              setHasCameraPermission(false);
+              setIsCameraLoading(false);
+              setCameraInitialized(false);
+            }
+            return;
           }
-        } catch (error) {
-          console.error('Error accessing camera:', error);
-          setHasCameraPermission(false);
-          toast({
-            variant: 'destructive',
-            title: 'Akses Kamera Ditolak',
-            description: 'Mohon aktifkan izin kamera di pengaturan browser Anda untuk menggunakan fitur ini.',
-          });
-          setIsCameraLoading(false);
-        }
-      };
-      getCameraPermission();
-    } else {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            if (isEffectMounted) {
+              setActiveStream(stream);
+              setHasCameraPermission(true);
+              setCameraInitialized(true); // Mark as initialized
+              if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+                videoRef.current.onloadedmetadata = () => {
+                  if (isEffectMounted) {
+                    setIsCameraLoading(false);
+                  }
+                };
+                videoRef.current.play().catch(err => {
+                  console.warn("Gagal memulai video:", err);
+                  if (isEffectMounted) setIsCameraLoading(false); // Stop loading if play fails
+                });
+              } else {
+                setIsCameraLoading(false); // videoRef not available
+              }
+            } else { // Effect unmounted before we could set state
+              stream.getTracks().forEach(track => track.stop());
+            }
+          } catch (error) {
+            console.error('Error mengakses kamera:', error);
+            if (isEffectMounted) {
+              setHasCameraPermission(false);
+              toast({
+                variant: 'destructive',
+                title: 'Akses Kamera Ditolak',
+                description: 'Mohon aktifkan izin kamera di pengaturan browser Anda.',
+              });
+              setIsCameraLoading(false);
+              setCameraInitialized(false); // Allow re-try
+            }
+          }
+        };
+        getCameraPermissionInternal();
+      } else if (activeStream && videoRef.current && !videoRef.current.srcObject) {
+        // Re-assign stream if tab was re-focused and srcObject was lost (e.g. due to stopActiveStream)
+        videoRef.current.srcObject = activeStream;
+        videoRef.current.play().catch(console.warn);
+        setIsCameraLoading(false); // Should be quick if stream already exists
+      } else if (!activeStream && cameraInitialized) {
+        // Stream was stopped, but we are still in camera tab, try to re-init
+        setCameraInitialized(false); // Trigger re-initialization
+      } else if (!cameraInitialized && !activeStream) {
+        // Fallback: if somehow we are in camera tab without initialization attempt
+        setIsCameraLoading(true); // Show loader to indicate attempt
+        setCameraInitialized(false); // Ensure it will try to initialize
+      }
+
+
+    } else { // Not in camera mode or scan mode
       stopActiveStream();
-      setIsCameraLoading(false); // No longer loading if not in camera view
+      if (isEffectMounted) {
+        setIsCameraLoading(false);
+        setCameraInitialized(false); // Reset for next time camera tab is selected
+      }
     }
 
-    // Cleanup function
     return () => {
-      stopActiveStream();
+      isEffectMounted = false;
+      // Cleanup on unmount or if dependencies change triggering cleanup
+      // stopActiveStream(); // This is now called conditionally or when inputMode/scanTabActiveView changes
       if (videoRef.current) {
-        videoRef.current.onloadedmetadata = null; // Clean up event listener
+        videoRef.current.onloadedmetadata = null;
       }
     };
-  }, [inputMode, scanTabActiveView, stopActiveStream, toast]);
+  }, [inputMode, scanTabActiveView, cameraInitialized, activeStream, stopActiveStream, toast]);
 
 
   const handleToggleListening = async () => {
@@ -202,9 +245,8 @@ export default function ScrapChefPage() {
       recognitionRef.current.stop();
     } else {
       try {
-        // Check for microphone permission before starting recognition
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            await navigator.mediaDevices.getUserMedia({ audio: true }); // Request permission
+            await navigator.mediaDevices.getUserMedia({ audio: true }); 
             recognitionRef.current.start();
         } else {
             throw new Error("MediaDevices API not supported");
@@ -249,7 +291,6 @@ export default function ScrapChefPage() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
-    // Check if video stream is ready and has dimensions
     if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0) {
       setError("Kamera belum siap atau feed video bermasalah. Mohon tunggu sebentar dan coba lagi.");
       toast({ variant: "destructive", title: "Kamera Belum Siap", description: "Feed video belum sepenuhnya dimuat. Tunggu beberapa saat dan coba lagi." });
@@ -265,9 +306,10 @@ export default function ScrapChefPage() {
       const dataUri = canvas.toDataURL('image/png');
       setImagePreview(dataUri);
       setSelectedFile(null); 
-      setScanTabActiveView('upload'); // Switch to upload tab to show the preview
-      stopActiveStream(); // Stop camera stream after taking photo
-      setError(null); // Clear any previous errors
+      setScanTabActiveView('upload'); 
+      stopActiveStream(); 
+      setCameraInitialized(false); // Reset so it re-initializes if user goes back to camera tab
+      setError(null); 
     } else {
       setError("Gagal mengambil konteks canvas untuk memproses gambar.");
       toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
@@ -341,6 +383,8 @@ export default function ScrapChefPage() {
         id: new Date().toISOString(),
         dateSaved: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
         ingredientsInput: ingredientsText,
+        // imageUrl and dataAiHint are not explicitly set here, relying on potential future enhancements
+        // For now, they will be undefined when saving.
       };
 
       try {
@@ -427,7 +471,10 @@ export default function ScrapChefPage() {
                 <div className="flex space-x-2 mb-4">
                   <Button 
                     variant={scanTabActiveView === 'upload' ? 'default' : 'outline'} 
-                    onClick={() => setScanTabActiveView('upload')}
+                    onClick={() => {
+                        setScanTabActiveView('upload');
+                        // Potentially stop camera if switching from camera view, handled by useEffect
+                    }}
                     className="flex-1"
                   >
                     <UploadCloud className="mr-2 h-4 w-4" /> Unggah File
@@ -438,6 +485,7 @@ export default function ScrapChefPage() {
                       setScanTabActiveView('camera');
                       setImagePreview(null); 
                       setSelectedFile(null);
+                      setCameraInitialized(false); // Ensure camera attempts to re-initialize
                     }}
                     className="flex-1"
                   >
@@ -460,10 +508,10 @@ export default function ScrapChefPage() {
                   <div className="space-y-4">
                     <div className="border rounded-md overflow-hidden aspect-video relative w-full bg-muted flex items-center justify-center">
                       <video ref={videoRef} className="w-full h-full object-contain" autoPlay muted playsInline data-ai-hint="live camera feed" />
-                      {isCameraLoading && hasCameraPermission && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><Loader2 className="h-8 w-8 text-white animate-spin" /></div>}
+                      {isCameraLoading && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><Loader2 className="h-8 w-8 text-white animate-spin" /></div>}
                     </div>
                     
-                    {!isCameraLoading && !hasCameraPermission && (
+                    {!isCameraLoading && !hasCameraPermission && cameraInitialized && ( // Show if done trying and no permission
                        <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
                           <AlertTitle>Akses Kamera Diperlukan</AlertTitle>
@@ -480,7 +528,7 @@ export default function ScrapChefPage() {
                 )}
                 <canvas ref={canvasRef} className="hidden"></canvas> 
                 
-                {(scanTabActiveView === 'upload' || imagePreview) && ( // Show analyze button if in upload tab OR if there's an image preview (from camera)
+                {(scanTabActiveView === 'upload' || imagePreview) && ( 
                   <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
                     {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                     Analisis Gambar
@@ -532,8 +580,9 @@ export default function ScrapChefPage() {
               <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Bahan-bahan Anda</CardTitle>
               <CardDescription>
                 {ingredientsText ? "Periksa dan edit daftar bahan Anda di bawah ini." : 
-                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && !hasCameraPermission ? "Izinkan akses kamera dan pastikan kamera berfungsi." :
+                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && !hasCameraPermission && cameraInitialized ? "Izinkan akses kamera dan pastikan kamera berfungsi." :
                   inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && hasCameraPermission && !isCameraLoading ? "Arahkan kamera ke bahan dan ambil gambar." :
+                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && isCameraLoading ? "Memuat kamera..." :
                   inputMode === 'scan' && !imagePreview && scanTabActiveView === 'upload' ? "Unggah gambar bahan Anda." :
                   inputMode === 'voice' ? "Mulai berbicara untuk menambahkan bahan atau edit di bawah." :
                  "Masukkan bahan Anda, pisahkan dengan koma."
@@ -636,4 +685,3 @@ export default function ScrapChefPage() {
     </div>
   );
 }
-
