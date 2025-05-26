@@ -27,6 +27,12 @@ declare global {
   }
 }
 
+interface SavedRecipe extends GenerateRecipeOutput {
+  id: string;
+  dateSaved: string;
+  ingredientsInput: string; // The original ingredients text used for generation
+}
+
 export default function ScrapChefPage() {
   const [inputMode, setInputMode] = useState<"scan" | "text" | "voice">("scan");
   const [ingredientsText, setIngredientsText] = useState<string>("");
@@ -46,16 +52,14 @@ export default function ScrapChefPage() {
 
   const { toast } = useToast();
 
-  // State untuk fitur kamera di tab Scan
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
   const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null); // Hidden canvas for taking photo
+  const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
 
 
-  // Speech Recognition Effect
   useEffect(() => {
     if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
       const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -121,7 +125,6 @@ export default function ScrapChefPage() {
     }
   }, [inputMode, isListening]);
 
-  // Camera Effect
   const stopActiveStream = useCallback(() => {
     if (activeStream) {
       activeStream.getTracks().forEach(track => track.stop());
@@ -129,14 +132,13 @@ export default function ScrapChefPage() {
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
-      // setHasCameraPermission(false); // Keep permission status unless explicitly revoked or error
     }
   }, [activeStream]);
 
   useEffect(() => {
     if (inputMode === 'scan' && scanTabActiveView === 'camera') {
       setIsCameraLoading(true);
-      setHasCameraPermission(false); // Reset on view switch
+      setHasCameraPermission(false); 
       const getCameraPermission = async () => {
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
@@ -163,7 +165,6 @@ export default function ScrapChefPage() {
     }
 
     return () => {
-      // This cleanup will run if inputMode or scanTabActiveView changes, or on unmount
       stopActiveStream();
     };
   }, [inputMode, scanTabActiveView, stopActiveStream, toast]);
@@ -179,7 +180,7 @@ export default function ScrapChefPage() {
       recognitionRef.current.stop();
     } else {
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true }); // Check mic permission
+        await navigator.mediaDevices.getUserMedia({ audio: true }); 
         recognitionRef.current.start();
       } catch (err) {
         console.error('Microphone access denied or error', err);
@@ -220,10 +221,10 @@ export default function ScrapChefPage() {
         context.drawImage(video, 0, 0, canvas.width, canvas.height);
         const dataUri = canvas.toDataURL('image/png');
         setImagePreview(dataUri);
-        setSelectedFile(null); // Clear selected file if any
-        setScanTabActiveView('upload'); // Switch to upload view to show preview
-        stopActiveStream(); // Stop camera after taking photo
-        setHasCameraPermission(false); // Reset permission state as camera is off
+        setSelectedFile(null); 
+        setScanTabActiveView('upload'); 
+        stopActiveStream(); 
+        setHasCameraPermission(false); 
       } else {
         setError("Gagal mengambil konteks canvas.");
         toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
@@ -295,10 +296,48 @@ export default function ScrapChefPage() {
 
   const handleSaveRecipe = () => {
     if (recipe) {
-      toast({
-        title: "Resep Disimpan (Mock)",
-        description: `${recipe.recipeName} telah disimpan (sementara). Fitur penyimpanan penuh akan datang!`,
-      });
+      const newRecipeToSave: SavedRecipe = {
+        ...recipe,
+        id: new Date().toISOString(),
+        dateSaved: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
+        ingredientsInput: ingredientsText,
+      };
+
+      try {
+        const existingRecipesRaw = localStorage.getItem('scrapchef_recipes');
+        const existingRecipes: SavedRecipe[] = existingRecipesRaw ? JSON.parse(existingRecipesRaw) : [];
+        
+        // Hindari duplikasi berdasarkan nama resep dan tanggal (sederhana, bisa lebih canggih)
+        const isDuplicate = existingRecipes.some(r => r.recipeName === newRecipeToSave.recipeName && r.dateSaved === newRecipeToSave.dateSaved);
+        if (isDuplicate) {
+            toast({
+                variant: "default",
+                title: "Resep Sudah Disimpan",
+                description: `${recipe.recipeName} sepertinya sudah ada di riwayat Anda.`,
+            });
+            return;
+        }
+
+        existingRecipes.unshift(newRecipeToSave); // Add to the beginning of the list
+        localStorage.setItem('scrapchef_recipes', JSON.stringify(existingRecipes));
+        toast({
+          title: "Resep Disimpan!",
+          description: `${recipe.recipeName} telah berhasil disimpan ke riwayat Anda.`,
+        });
+      } catch (error) {
+        console.error("Gagal menyimpan resep ke local storage:", error);
+        toast({
+          variant: "destructive",
+          title: "Gagal Menyimpan Resep",
+          description: "Terjadi kesalahan saat mencoba menyimpan resep Anda.",
+        });
+      }
+    } else {
+        toast({
+            variant: "destructive",
+            title: "Tidak Ada Resep",
+            description: "Tidak ada resep untuk disimpan.",
+        });
     }
   };
   
@@ -358,7 +397,7 @@ export default function ScrapChefPage() {
                     variant={scanTabActiveView === 'camera' ? 'default' : 'outline'} 
                     onClick={() => {
                       setScanTabActiveView('camera');
-                      setImagePreview(null); // Clear preview when switching to camera
+                      setImagePreview(null); 
                       setSelectedFile(null);
                     }}
                     className="flex-1"
@@ -400,7 +439,7 @@ export default function ScrapChefPage() {
                     </Button>
                   </div>
                 )}
-                <canvas ref={canvasRef} className="hidden"></canvas> {/* Hidden canvas for processing */}
+                <canvas ref={canvasRef} className="hidden"></canvas> 
                 
                 <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
                   {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
@@ -556,4 +595,3 @@ export default function ScrapChefPage() {
     </div>
   );
 }
-

@@ -1,46 +1,89 @@
 
 "use client";
 
-import React, { useState } from 'react'; // useState diimpor dari React
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { ArrowLeft, ChefHat, Trash2, Eye } from 'lucide-react';
-// import { useToast } from "@/hooks/use-toast"; // Uncomment jika ingin menggunakan toast
+import { ArrowLeft, ChefHat, Trash2, Eye, AlertCircle } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
+import type { GenerateRecipeOutput } from "@/ai/flows/generate-recipe";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
-interface HistoricRecipe {
+interface HistoricRecipe extends GenerateRecipeOutput {
   id: string;
-  name: string;
   dateSaved: string;
-  imageUrl?: string;
-  ingredientsSummary: string;
-  dataAiHint?: string; // Ditambahkan untuk placeholder image
+  ingredientsInput: string; // The original ingredients text used for generation
+  imageUrl?: string; // Optional, as we are not saving images from page.tsx
+  dataAiHint?: string; // Optional
 }
 
-// Mock data untuk riwayat resep
-const mockHistoryData: HistoricRecipe[] = [
-  { id: "1", name: "Ayam Goreng Mentega Lezat", dateSaved: "2024-07-28", imageUrl: "https://placehold.co/300x200.png", ingredientsSummary: "Ayam, mentega, bawang bombay, kecap", dataAiHint: "butter chicken" },
-  { id: "2", name: "Nasi Goreng Spesial Keluarga", dateSaved: "2024-07-27", ingredientsSummary: "Nasi, telur, udang, sayuran", dataAiHint: "special fried rice" },
-  { id: "3", name: "Tumis Kangkung Bumbu Terasi", dateSaved: "2024-07-26", imageUrl: "https://placehold.co/300x200.png", ingredientsSummary: "Kangkung, bawang putih, cabai, terasi", dataAiHint: "stirred water spinach" },
-  { id: "4", name: "Sup Ayam Jahe Hangat", dateSaved: "2024-07-25", ingredientsSummary: "Ayam, jahe, wortel, daun bawang", dataAiHint: "chicken ginger soup"},
-];
+// // Mock data untuk riwayat resep - Akan diganti dengan data dari localStorage
+// const mockHistoryData: HistoricRecipe[] = [
+//   { id: "1", recipeName: "Ayam Goreng Mentega Lezat", dateSaved: "2024-07-28", imageUrl: "https://placehold.co/300x200.png", ingredientsInput: "Ayam, mentega, bawang bombay, kecap", ingredientsList: "", instructions: "", dataAiHint: "butter chicken" },
+//   { id: "2", recipeName: "Nasi Goreng Spesial Keluarga", dateSaved: "2024-07-27", ingredientsInput: "Nasi, telur, udang, sayuran", ingredientsList: "", instructions: "", dataAiHint: "special fried rice" },
+//   { id: "3", recipeName: "Tumis Kangkung Bumbu Terasi", dateSaved: "2024-07-26", imageUrl: "https://placehold.co/300x200.png", ingredientsInput: "Kangkung, bawang putih, cabai, terasi", ingredientsList: "", instructions: "", dataAiHint: "stirred water spinach" },
+//   { id: "4", recipeName: "Sup Ayam Jahe Hangat", dateSaved: "2024-07-25", ingredientsInput: "Ayam, jahe, wortel, daun bawang", ingredientsList: "", instructions: "", dataAiHint: "chicken ginger soup"},
+// ];
 
 
 export default function HistoryPage() {
-  const [recipeHistory, setRecipeHistory] = useState<HistoricRecipe[]>(mockHistoryData);
-  // const { toast } = useToast(); // Uncomment jika ingin menggunakan toast
+  const [recipeHistory, setRecipeHistory] = useState<HistoricRecipe[]>([]);
+  const { toast } = useToast();
+  const [recipeToDelete, setRecipeToDelete] = useState<string | null>(null);
+
+
+  useEffect(() => {
+    try {
+      const storedRecipesRaw = localStorage.getItem('scrapchef_recipes');
+      if (storedRecipesRaw) {
+        const storedRecipes: HistoricRecipe[] = JSON.parse(storedRecipesRaw);
+        setRecipeHistory(storedRecipes);
+      }
+    } catch (error) {
+      console.error("Gagal memuat riwayat resep dari local storage:", error);
+      toast({
+        variant: "destructive",
+        title: "Gagal Memuat Riwayat",
+        description: "Tidak dapat memuat riwayat resep Anda dari penyimpanan lokal.",
+      });
+    }
+  }, [toast]);
 
   const handleDeleteRecipe = (id: string) => {
-    setRecipeHistory(prev => prev.filter(recipe => recipe.id !== id));
-    // toast({ title: "Resep Dihapus", description: "Resep telah berhasil dihapus dari riwayat Anda." });
-    alert("Resep telah dihapus (mock)."); // Placeholder, ganti dengan toast jika diinginkan
+    try {
+      const updatedHistory = recipeHistory.filter(recipe => recipe.id !== id);
+      localStorage.setItem('scrapchef_recipes', JSON.stringify(updatedHistory));
+      setRecipeHistory(updatedHistory);
+      toast({ title: "Resep Dihapus", description: "Resep telah berhasil dihapus dari riwayat Anda." });
+    } catch (error) {
+      console.error("Gagal menghapus resep dari local storage:", error);
+      toast({
+        variant: "destructive",
+        title: "Gagal Menghapus Resep",
+        description: "Terjadi kesalahan saat mencoba menghapus resep.",
+      });
+    }
+    setRecipeToDelete(null);
   };
 
-  const handleViewRecipe = (id: string) => {
+  const handleViewRecipe = (recipe: HistoricRecipe) => {
     // Di aplikasi nyata, ini akan mengarahkan ke halaman detail resep atau membuka modal
+    // Untuk saat ini, kita bisa menampilkan alert atau log detail resep
+    alert(`Melihat detail untuk resep: ${recipe.recipeName}\n\nBahan Input: ${recipe.ingredientsInput}\n\n(Fitur detail lengkap akan segera hadir!)`);
+    // console.log("Viewing recipe:", recipe); 
     // toast({ title: "Lihat Detail Resep", description: `Membuka detail untuk resep ID: ${id}. Fitur ini akan datang!` });
-    alert(`Melihat detail resep (ID: ${id}). Fitur ini akan segera hadir!`);
   };
 
 
@@ -80,32 +123,55 @@ export default function HistoryPage() {
             {recipeHistory.map((recipe) => (
               <Card key={recipe.id} className="shadow-md hover:shadow-lg transition-shadow duration-200 ease-in-out">
                 <div className="flex flex-col sm:flex-row">
-                  {recipe.imageUrl && (
+                  {recipe.imageUrl && ( // Gambar hanya ditampilkan jika ada URL
                     <div className="sm:w-1/3 relative aspect-video sm:aspect-auto rounded-t-lg sm:rounded-l-lg sm:rounded-t-none overflow-hidden">
                       <Image 
                         src={recipe.imageUrl} 
-                        alt={recipe.name} 
+                        alt={recipe.recipeName} 
                         layout="fill" 
                         objectFit="cover" 
                         data-ai-hint={recipe.dataAiHint || "food cooked"}
                       />
                     </div>
                   )}
+                   {!recipe.imageUrl && ( // Placeholder jika tidak ada gambar
+                    <div className="sm:w-1/3 relative aspect-video sm:aspect-auto rounded-t-lg sm:rounded-l-lg sm:rounded-t-none overflow-hidden bg-muted flex items-center justify-center">
+                       <ChefHat className="h-16 w-16 text-primary/50" />
+                    </div>
+                  )}
                   <div className={`p-4 flex flex-col justify-between ${recipe.imageUrl ? 'sm:w-2/3' : 'w-full'}`}>
                     <div>
-                      <CardTitle className="text-xl text-primary mb-1">{recipe.name}</CardTitle>
+                      <CardTitle className="text-xl text-primary mb-1">{recipe.recipeName}</CardTitle>
                       <CardDescription className="text-xs mb-2">Disimpan: {recipe.dateSaved}</CardDescription>
                       <p className="text-sm text-muted-foreground mb-3">
-                        <span className="font-medium">Bahan:</span> {recipe.ingredientsSummary}
+                        <span className="font-medium">Bahan Digunakan:</span> {recipe.ingredientsInput}
                       </p>
                     </div>
                     <div className="flex justify-end space-x-2 mt-auto pt-2">
-                      <Button variant="outline" size="sm" onClick={() => handleViewRecipe(recipe.id)}>
+                      <Button variant="outline" size="sm" onClick={() => handleViewRecipe(recipe)}>
                         <Eye className="mr-1.5 h-4 w-4" /> Lihat
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => handleDeleteRecipe(recipe.id)}>
-                        <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                           <Button variant="destructive" size="sm" onClick={() => setRecipeToDelete(recipe.id)}>
+                            <Trash2 className="mr-1.5 h-4 w-4" /> Hapus
+                          </Button>
+                        </AlertDialogTrigger>
+                        {recipeToDelete === recipe.id && (
+                           <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Anda yakin ingin menghapus resep ini?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Tindakan ini tidak dapat dibatalkan. Resep "{recipe.recipeName}" akan dihapus secara permanen dari riwayat Anda.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel onClick={() => setRecipeToDelete(null)}>Batal</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleDeleteRecipe(recipe.id)}>Hapus</AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        )}
+                      </AlertDialog>
                     </div>
                   </div>
                 </div>
@@ -121,4 +187,3 @@ export default function HistoryPage() {
     </div>
   );
 }
-
