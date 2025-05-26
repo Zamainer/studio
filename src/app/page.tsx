@@ -56,8 +56,7 @@ export default function ScrapChefPage() {
 
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
-  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false); // Set false initially
-  const [cameraInitialized, setCameraInitialized] = useState<boolean>(false);
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false); 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -118,11 +117,9 @@ export default function ScrapChefPage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
-      }
+      // activeStream cleanup is handled in the other useEffect
     };
-  }, [toast, activeStream]); // Added activeStream to dependencies for cleanup completeness
+  }, [toast]); 
 
   useEffect(() => {
     if (inputMode !== 'voice' && isListening && recognitionRef.current) {
@@ -138,6 +135,7 @@ export default function ScrapChefPage() {
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
+      console.log("Camera stream stopped.");
     }
   }, [activeStream]);
 
@@ -145,11 +143,12 @@ export default function ScrapChefPage() {
     let isEffectMounted = true;
 
     if (inputMode === 'scan' && scanTabActiveView === 'camera') {
-      if (!cameraInitialized && !activeStream) { // Only initialize if not already done and no active stream
+      if (!activeStream) { // Only attempt to initialize if no active stream
         setIsCameraLoading(true);
-        setHasCameraPermission(false); // Reset permission status
+        setHasCameraPermission(false); // Reset permission status for this attempt
+        console.log("Attempting to initialize camera...");
 
-        const getCameraPermissionInternal = async () => {
+        const initializeCamera = async () => {
           if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
             if (isEffectMounted) {
               toast({
@@ -159,7 +158,6 @@ export default function ScrapChefPage() {
               });
               setHasCameraPermission(false);
               setIsCameraLoading(false);
-              setCameraInitialized(false);
             }
             return;
           }
@@ -168,26 +166,63 @@ export default function ScrapChefPage() {
             if (isEffectMounted) {
               setActiveStream(stream);
               setHasCameraPermission(true);
-              setCameraInitialized(true); // Mark as initialized
+              console.log("Camera permission granted and stream acquired.");
               if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                videoRef.current.onloadedmetadata = () => {
+                const videoElement = videoRef.current;
+                videoElement.srcObject = stream;
+                
+                let metadataLoaded = false;
+                const handleMetadataLoaded = () => {
+                  metadataLoaded = true;
                   if (isEffectMounted) {
+                    console.log("Video metadata loaded.");
                     setIsCameraLoading(false);
                   }
                 };
-                videoRef.current.play().catch(err => {
-                  console.warn("Gagal memulai video:", err);
-                  if (isEffectMounted) setIsCameraLoading(false); // Stop loading if play fails
-                });
+                videoElement.onloadedmetadata = handleMetadataLoaded;
+
+                videoElement.play()
+                  .then(() => {
+                    console.log("Video play attempted successfully.");
+                    // Fallback: If onloadedmetadata is too slow or doesn't fire,
+                    // but play() promise resolves, consider loading done.
+                    // This makes the UI responsive faster, handleTakePhoto will gate actual capture.
+                    if (isEffectMounted && !metadataLoaded) {
+                       // Check if video has dimensions after a short delay, if not, metadata might still be loading
+                       setTimeout(() => {
+                          if (isEffectMounted && !metadataLoaded && videoElement.videoWidth > 0) {
+                            console.log("Video play resolved, video has dimensions. Forcing loading to false as fallback.");
+                            setIsCameraLoading(false);
+                          } else if (isEffectMounted && !metadataLoaded) {
+                            console.log("Video play resolved, but video dimensions not yet available or metadata not loaded.");
+                            // It's possible onloadedmetadata will still fire. If not, spinner might persist.
+                            // For now, we will rely on onloadedmetadata or explicit error for isCameraLoading=false
+                          }
+                       }, 500); // Check after 500ms
+                    }
+                  })
+                  .catch(err => {
+                    console.error('Error playing video:', err);
+                    if (isEffectMounted) {
+                      setIsCameraLoading(false);
+                      setHasCameraPermission(false); // Assume play error might be related to deeper permission/access issue
+                       toast({
+                        variant: 'destructive',
+                        title: 'Gagal Memutar Video',
+                        description: 'Tidak dapat memulai feed kamera. Coba lagi atau periksa izin kamera.',
+                      });
+                    }
+                  });
               } else {
-                setIsCameraLoading(false); // videoRef not available
+                if (isEffectMounted) setIsCameraLoading(false); // videoRef not available
+                console.log("videoRef not current when stream acquired.");
               }
-            } else { // Effect unmounted before we could set state
-              stream.getTracks().forEach(track => track.stop());
+            } else { 
+              stream.getTracks().forEach(track => track.stop()); // Cleanup if effect unmounted
+              console.log("Effect unmounted before camera could be fully set up.");
             }
           } catch (error) {
-            console.error('Error mengakses kamera:', error);
+            console.error('Error accessing camera:', error);
             if (isEffectMounted) {
               setHasCameraPermission(false);
               toast({
@@ -196,43 +231,42 @@ export default function ScrapChefPage() {
                 description: 'Mohon aktifkan izin kamera di pengaturan browser Anda.',
               });
               setIsCameraLoading(false);
-              setCameraInitialized(false); // Allow re-try
             }
           }
         };
-        getCameraPermissionInternal();
-      } else if (activeStream && videoRef.current && !videoRef.current.srcObject) {
-        // Re-assign stream if tab was re-focused and srcObject was lost (e.g. due to stopActiveStream)
+        initializeCamera();
+      } else if (videoRef.current && !videoRef.current.srcObject && activeStream) {
+        // Re-attach stream if it exists but video element lost it (e.g. tab re-focus)
+        console.log("Re-attaching active stream to video element.");
         videoRef.current.srcObject = activeStream;
-        videoRef.current.play().catch(console.warn);
-        setIsCameraLoading(false); // Should be quick if stream already exists
-      } else if (!activeStream && cameraInitialized) {
-        // Stream was stopped, but we are still in camera tab, try to re-init
-        setCameraInitialized(false); // Trigger re-initialization
-      } else if (!cameraInitialized && !activeStream) {
-        // Fallback: if somehow we are in camera tab without initialization attempt
-        setIsCameraLoading(true); // Show loader to indicate attempt
-        setCameraInitialized(false); // Ensure it will try to initialize
+        videoRef.current.play().catch(err => console.warn("Error re-playing video:", err));
+        setIsCameraLoading(false); // Assume re-attaching is fast
+      } else if (activeStream) {
+        // Stream is active, video should be playing or ready
+        setIsCameraLoading(false);
       }
-
-
     } else { // Not in camera mode or scan mode
       stopActiveStream();
       if (isEffectMounted) {
-        setIsCameraLoading(false);
-        setCameraInitialized(false); // Reset for next time camera tab is selected
+        setIsCameraLoading(false); 
       }
     }
 
     return () => {
       isEffectMounted = false;
-      // Cleanup on unmount or if dependencies change triggering cleanup
-      // stopActiveStream(); // This is now called conditionally or when inputMode/scanTabActiveView changes
       if (videoRef.current) {
         videoRef.current.onloadedmetadata = null;
       }
+      // stopActiveStream() is called when inputMode/scanTabActiveView changes, or on component unmount if needed by main cleanup
     };
-  }, [inputMode, scanTabActiveView, cameraInitialized, activeStream, stopActiveStream, toast]);
+  }, [inputMode, scanTabActiveView, activeStream, toast, stopActiveStream]); // Removed cameraInitialized
+
+  // Cleanup stream on component unmount
+  useEffect(() => {
+    return () => {
+      stopActiveStream();
+    };
+  }, [stopActiveStream]);
 
 
   const handleToggleListening = async () => {
@@ -245,19 +279,23 @@ export default function ScrapChefPage() {
       recognitionRef.current.stop();
     } else {
       try {
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-            await navigator.mediaDevices.getUserMedia({ audio: true }); 
-            recognitionRef.current.start();
-        } else {
-            throw new Error("MediaDevices API not supported");
-        }
+        // Ensure microphone permission is implicitly checked by starting recognition
+        // For some browsers, a separate getUserMedia({audio:true}) might be needed first
+        // if direct start() doesn't prompt. But usually, start() handles it.
+        recognitionRef.current.start();
       } catch (err) {
-        console.error('Microphone access denied or error', err);
-        let userMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
-        if ((err as Error).name === 'NotFoundError' || (err as Error).name === 'DevicesNotFoundError' ) {
-            userMessage = "Mikrofon tidak ditemukan. Pastikan mikrofon terpasang dengan benar.";
-        } else if ((err as Error).message === "MediaDevices API not supported") {
-            userMessage = "Fitur mikrofon tidak didukung di browser ini."
+        console.error('Error starting speech recognition', err);
+        let userMessage = "Akses mikrofon ditolak atau terjadi error. Mohon aktifkan di pengaturan browser Anda.";
+         if ((err as SpeechRecognitionErrorEvent || err as Event ).type === 'error') { // DOMError in some cases
+            const speechError = err as SpeechRecognitionErrorEvent;
+            if (speechError.error === 'not-allowed' || speechError.error === 'service-not-allowed') {
+                 userMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
+            } else if (speechError.error === 'no-speech') {
+                // This is handled by onresult/onerror usually, but catch if start() throws it
+                userMessage = "Tidak ada suara terdeteksi. Silakan coba lagi.";
+            } else {
+                userMessage = `Gagal memulai pengenalan suara: ${speechError.error}`;
+            }
         }
         setError(userMessage);
         toast({ variant: "destructive", title: "Kesalahan Mikrofon", description: userMessage });
@@ -284,7 +322,7 @@ export default function ScrapChefPage() {
   const handleTakePhoto = () => {
     if (!videoRef.current || !canvasRef.current) {
       setError("Komponen kamera tidak siap. Coba aktifkan ulang tab kamera.");
-      toast({ variant: "destructive", title: "Error Kamera", description: "Komponen kamera tidak ditemukan. Coba muat ulang atau aktifkan ulang tab kamera." });
+      toast({ variant: "destructive", title: "Error Kamera", description: "Komponen kamera tidak ditemukan." });
       return;
     }
 
@@ -292,7 +330,7 @@ export default function ScrapChefPage() {
     const canvas = canvasRef.current;
 
     if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0) {
-      setError("Kamera belum siap atau feed video bermasalah. Mohon tunggu sebentar dan coba lagi.");
+      setError("Kamera belum siap atau feed video bermasalah. Mohon tunggu video termuat sepenuhnya dan coba lagi.");
       toast({ variant: "destructive", title: "Kamera Belum Siap", description: "Feed video belum sepenuhnya dimuat. Tunggu beberapa saat dan coba lagi." });
       return;
     }
@@ -303,13 +341,13 @@ export default function ScrapChefPage() {
 
     if (context) {
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUri = canvas.toDataURL('image/png');
+      const dataUri = canvas.toDataURL('image/png'); // Menggunakan PNG untuk kualitas lebih baik dari kamera
       setImagePreview(dataUri);
       setSelectedFile(null); 
       setScanTabActiveView('upload'); 
       stopActiveStream(); 
-      setCameraInitialized(false); // Reset so it re-initializes if user goes back to camera tab
       setError(null); 
+      toast({ title: "Gambar Diambil!", description: "Gambar dari kamera berhasil diambil." });
     } else {
       setError("Gagal mengambil konteks canvas untuk memproses gambar.");
       toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
@@ -364,12 +402,13 @@ export default function ScrapChefPage() {
         description: `Nikmati ${result.recipeName} Anda!`,
       });
     } catch (e) {
-      console.error(e);
-      setError("Gagal menghasilkan resep. Silakan coba lagi.");
+      console.error("Error di handleGenerateRecipe:", e);
+      const errorMessage = (e instanceof Error) ? e.message : "Terjadi kesalahan tidak diketahui saat menghasilkan resep.";
+      setError(`Gagal menghasilkan resep: ${errorMessage}`);
       toast({
         variant: "destructive",
         title: "Error Pembuatan Resep",
-        description: (e as Error).message || "Terjadi kesalahan tidak diketahui.",
+        description: errorMessage,
       });
     } finally {
       setIsLoadingRecipe(false);
@@ -473,7 +512,7 @@ export default function ScrapChefPage() {
                     variant={scanTabActiveView === 'upload' ? 'default' : 'outline'} 
                     onClick={() => {
                         setScanTabActiveView('upload');
-                        // Potentially stop camera if switching from camera view, handled by useEffect
+                        stopActiveStream(); // Stop camera if switching from camera view
                     }}
                     className="flex-1"
                   >
@@ -485,7 +524,7 @@ export default function ScrapChefPage() {
                       setScanTabActiveView('camera');
                       setImagePreview(null); 
                       setSelectedFile(null);
-                      setCameraInitialized(false); // Ensure camera attempts to re-initialize
+                      // Initialization will be triggered by useEffect
                     }}
                     className="flex-1"
                   >
@@ -511,23 +550,24 @@ export default function ScrapChefPage() {
                       {isCameraLoading && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><Loader2 className="h-8 w-8 text-white animate-spin" /></div>}
                     </div>
                     
-                    {!isCameraLoading && !hasCameraPermission && cameraInitialized && ( // Show if done trying and no permission
+                    {!isCameraLoading && !hasCameraPermission && scanTabActiveView === 'camera' && ( 
                        <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
                           <AlertTitle>Akses Kamera Diperlukan</AlertTitle>
                           <AlertDescription>
-                            Izinkan akses kamera di browser Anda untuk menggunakan fitur ini. Jika sudah diizinkan dan masih bermasalah, coba muat ulang halaman.
+                            Izinkan akses kamera di browser Anda untuk menggunakan fitur ini. Jika sudah diizinkan dan masih bermasalah, coba muat ulang halaman atau pilih ulang tab kamera.
                           </AlertDescription>
                         </Alert>
                     )}
 
-                    <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission} className="w-full" data-ai-hint="capture ingredient photo">
+                    <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission || !activeStream} className="w-full" data-ai-hint="capture ingredient photo">
                       <Camera className="mr-2 h-4 w-4" /> Ambil Gambar
                     </Button>
                   </div>
                 )}
                 <canvas ref={canvasRef} className="hidden"></canvas> 
                 
+                {/* Tombol analisis muncul jika mode upload ATAU jika sudah ada imagePreview (dari kamera) */}
                 {(scanTabActiveView === 'upload' || imagePreview) && ( 
                   <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
                     {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
@@ -574,16 +614,16 @@ export default function ScrapChefPage() {
           </TabsContent>
         </Tabs>
         
-        {(ingredientsText || inputMode === 'text' || inputMode === 'voice' || (inputMode === 'scan' && imagePreview)) && (
+        {(ingredientsText || inputMode === 'text' || inputMode === 'voice' || (inputMode === 'scan' && imagePreview) || (inputMode === 'scan' && scanTabActiveView === 'camera')) && (
           <Card className="mt-0">
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Bahan-bahan Anda</CardTitle>
               <CardDescription>
                 {ingredientsText ? "Periksa dan edit daftar bahan Anda di bawah ini." : 
-                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && !hasCameraPermission && cameraInitialized ? "Izinkan akses kamera dan pastikan kamera berfungsi." :
-                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && hasCameraPermission && !isCameraLoading ? "Arahkan kamera ke bahan dan ambil gambar." :
-                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && isCameraLoading ? "Memuat kamera..." :
-                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'upload' ? "Unggah gambar bahan Anda." :
+                  inputMode === 'scan' && scanTabActiveView === 'camera' && isCameraLoading ? "Memuat kamera..." :
+                  inputMode === 'scan' && scanTabActiveView === 'camera' && !hasCameraPermission ? "Izinkan akses kamera atau periksa izin di browser Anda." :
+                  inputMode === 'scan' && scanTabActiveView === 'camera' && hasCameraPermission ? "Arahkan kamera ke bahan dan ambil gambar, atau unggah file." :
+                  inputMode === 'scan' && scanTabActiveView === 'upload' && !imagePreview ? "Unggah gambar bahan Anda." :
                   inputMode === 'voice' ? "Mulai berbicara untuk menambahkan bahan atau edit di bawah." :
                  "Masukkan bahan Anda, pisahkan dengan koma."
                 }
@@ -685,3 +725,5 @@ export default function ScrapChefPage() {
     </div>
   );
 }
+
+    
