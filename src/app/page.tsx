@@ -56,7 +56,7 @@ export default function ScrapChefPage() {
 
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
-  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false); // Default to false
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -140,11 +140,29 @@ export default function ScrapChefPage() {
   }, [activeStream]);
 
   const startCameraStream = useCallback(async () => {
-    stopActiveStream(); // Hentikan stream sebelumnya jika ada
+    stopActiveStream();
     setIsCameraLoading(true);
-    setHasCameraPermission(false); // Reset izin, akan diatur saat berhasil
-
+    setHasCameraPermission(false);
+  
+    const cameraTimeoutId = setTimeout(() => {
+      // This check is to ensure the timeout logic only runs if we are still in a loading state
+      // which implies that the try/catch/finally block of getUserMedia hasn't completed successfully or errored out yet.
+      if (isCameraLoading) { 
+          console.warn('Camera stream initialization timed out after 15 seconds.');
+          toast({
+            variant: 'destructive',
+            title: 'Kamera Timeout',
+            description: 'Gagal memuat stream kamera belakang. Coba lagi atau unggah file.',
+          });
+          setIsCameraLoading(false);
+          setHasCameraPermission(false);
+          setActiveStream(null); 
+          if (videoRef.current) videoRef.current.srcObject = null;
+      }
+    }, 15000); // 15-second timeout
+  
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      clearTimeout(cameraTimeoutId);
       toast({
         variant: 'destructive',
         title: 'Kamera Tidak Didukung',
@@ -153,36 +171,27 @@ export default function ScrapChefPage() {
       setIsCameraLoading(false);
       return;
     }
-
+  
     try {
       const constraints: MediaStreamConstraints = { 
         video: { 
-          facingMode: 'environment' // Hanya minta kamera belakang
+          facingMode: 'environment' 
         } 
       };
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      
+      clearTimeout(cameraTimeoutId); 
+  
       setActiveStream(stream);
       setHasCameraPermission(true);
-
+  
       if (videoRef.current) {
         const videoElement = videoRef.current;
         videoElement.srcObject = stream;
-        videoElement.onloadedmetadata = () => {
-          console.log("Video metadata loaded.");
-          // isCameraLoading akan di-set false setelah video.play() berhasil
-        };
-        await videoElement.play().catch(err => {
-          console.error('Error playing video:', err);
-          toast({
-            variant: 'destructive',
-            title: 'Gagal Memutar Video',
-            description: 'Tidak dapat memulai pratinjau kamera.',
-          });
-        });
+        await videoElement.play();
       }
     } catch (error) {
+      clearTimeout(cameraTimeoutId); 
       console.error('Error accessing rear camera:', error);
       let errorTitle = 'Akses Kamera Belakang Gagal';
       let errorDescription = 'Tidak dapat mengakses kamera belakang. Pastikan izin kamera diberikan dan coba lagi. Anda juga bisa mengunggah file gambar.';
@@ -193,15 +202,17 @@ export default function ScrapChefPage() {
       }
       
       setHasCameraPermission(false);
+      setActiveStream(null); 
       toast({
         variant: 'destructive',
         title: errorTitle,
         description: errorDescription,
       });
     } finally {
-      setIsCameraLoading(false); // Selalu set loading false setelah upaya selesai
+      clearTimeout(cameraTimeoutId); 
+      setIsCameraLoading(false); 
     }
-  }, [stopActiveStream, toast]);
+  }, [stopActiveStream, toast, isCameraLoading]); // Added isCameraLoading to deps for timeout logic
 
 
   useEffect(() => {
@@ -209,10 +220,11 @@ export default function ScrapChefPage() {
     if (inputMode === 'scan' && scanTabActiveView === 'camera') {
         if (!cameraInitialized && !activeStream) {
             console.log("Initializing rear camera for camera tab...");
-            setCameraInitialized(true); // Set initialized true before starting
-            startCameraStream();
+            setCameraInitialized(true); 
+            startCameraStream(); 
         } else if (videoRef.current && !videoRef.current.srcObject && activeStream) {
             console.log("Re-attaching stream to video element.");
+            setIsCameraLoading(true); 
             videoRef.current.srcObject = activeStream;
             videoRef.current.play().then(() => {
                 if(isMounted) setIsCameraLoading(false);
@@ -220,15 +232,11 @@ export default function ScrapChefPage() {
                 console.warn("Error re-playing video:", err);
                 if(isMounted) setIsCameraLoading(false);
             });
-        } else if (!activeStream && cameraInitialized) { // Jika sudah diinisialisasi tapi stream hilang (misal izin dicabut)
-             if(isMounted) setIsCameraLoading(false); // Pastikan loading false
-        } else if (activeStream) {
-             if(isMounted) setIsCameraLoading(false); // Stream aktif, loading false
         }
-    } else {
+    } else { 
       stopActiveStream();
       if (isMounted) {
-        setCameraInitialized(false); // Reset saat keluar dari mode kamera
+        setCameraInitialized(false); 
         setIsCameraLoading(false); 
       }
     }
@@ -316,8 +324,8 @@ export default function ScrapChefPage() {
       setImagePreview(dataUri);
       setSelectedFile(null); 
       setScanTabActiveView('upload'); 
-      setCameraInitialized(false); // Reset agar kamera bisa diinisialisasi lagi jika kembali
-      stopActiveStream(); // Hentikan stream setelah foto diambil
+      setCameraInitialized(false); 
+      stopActiveStream(); 
       setError(null); 
       toast({ title: "Gambar Diambil!", description: "Gambar dari kamera berhasil diambil." });
     } else {
@@ -475,7 +483,7 @@ export default function ScrapChefPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Scan Bahan</CardTitle>
-                <CardDescription>Pilih metode scan: unggah file atau gunakan kamera langsung (kamera belakang diutamakan).</CardDescription>
+                <CardDescription>Pilih metode scan: unggah file atau gunakan kamera langsung (prioritas kamera belakang).</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex space-x-2 mb-4">
@@ -483,7 +491,7 @@ export default function ScrapChefPage() {
                     variant={scanTabActiveView === 'upload' ? 'default' : 'outline'} 
                     onClick={() => {
                         setScanTabActiveView('upload');
-                        setCameraInitialized(false); // Reset camera state
+                        setCameraInitialized(false); 
                         stopActiveStream();
                     }}
                     className="flex-1"
@@ -496,7 +504,6 @@ export default function ScrapChefPage() {
                       setScanTabActiveView('camera');
                       setImagePreview(null); 
                       setSelectedFile(null);
-                      // Inisialisasi kamera akan dipicu oleh useEffect
                     }}
                     className="flex-1"
                   >
@@ -525,7 +532,7 @@ export default function ScrapChefPage() {
                     {!isCameraLoading && !hasCameraPermission && scanTabActiveView === 'camera' && !activeStream && ( 
                        <Alert variant="destructive">
                           <AlertCircle className="h-4 w-4" />
-                          <AlertTitle>Akses Kamera Diperlukan</AlertTitle>
+                          <AlertTitle>Akses Kamera Belakang Diperlukan</AlertTitle>
                           <AlertDescription>
                             Pastikan izin kamera belakang diberikan. Jika bermasalah, coba muat ulang halaman atau pilih unggah file.
                           </AlertDescription>
@@ -592,7 +599,7 @@ export default function ScrapChefPage() {
               <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Bahan-bahan Anda</CardTitle>
               <CardDescription>
                 {ingredientsText ? "Periksa dan edit daftar bahan Anda di bawah ini." : 
-                  inputMode === 'scan' && scanTabActiveView === 'camera' && isCameraLoading ? "Memuat kamera..." :
+                  inputMode === 'scan' && scanTabActiveView === 'camera' && isCameraLoading ? "Memuat kamera belakang..." :
                   inputMode === 'scan' && scanTabActiveView === 'camera' && !hasCameraPermission && !activeStream ? "Izinkan akses kamera belakang atau periksa izin di browser Anda. Jika gagal, coba unggah file." :
                   inputMode === 'scan' && scanTabActiveView === 'camera' && hasCameraPermission ? "Arahkan kamera ke bahan dan ambil gambar, atau unggah file." :
                   inputMode === 'scan' && scanTabActiveView === 'upload' && !imagePreview ? "Unggah gambar bahan Anda." :
@@ -697,6 +704,8 @@ export default function ScrapChefPage() {
     </div>
   );
 }
+    
+
     
 
     
