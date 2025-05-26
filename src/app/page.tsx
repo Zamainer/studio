@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { analyzeImageForIngredients, type AnalyzeImageForIngredientsOutput } from "@/ai/flows/analyze-image-for-ingredients";
 import { generateRecipe, type GenerateRecipeOutput } from "@/ai/flows/generate-recipe";
 import CookingModeModal from "@/components/scrapchef/cooking-mode-modal";
+import ThemeToggleButton from "@/components/theme-toggle-button"; // Import tombol tema
 
 // Extend Window interface for SpeechRecognition
 declare global {
@@ -236,7 +237,7 @@ export default function ScrapChefPage() {
     <div className="min-h-screen flex flex-col items-center p-4 md:p-8 bg-background font-sans">
       <header className="mb-8 text-center w-full max-w-2xl">
         <div className="flex items-center justify-between">
-          <div className="w-10 h-10"></div> {/* Spacer for balance, can be a back button on other pages */}
+          <ThemeToggleButton /> {/* Tombol tema ditambahkan di sini */}
           <div className="flex flex-col items-center">
             <div className="flex items-center justify-center space-x-2">
               <ChefHat className="h-10 w-10 text-primary" />
@@ -244,11 +245,13 @@ export default function ScrapChefPage() {
             </div>
             <p className="text-muted-foreground mt-2">Resep Instan dari Sisa Bahan Kulkas Anda!</p>
           </div>
-          <Link href="/history" passHref>
-            <Button variant="outline" size="icon" aria-label="Lihat Riwayat Resep">
-              <BookMarked className="h-5 w-5" />
-            </Button>
-          </Link>
+          <div className="flex items-center space-x-2"> {/* Kontainer untuk tombol kanan */}
+            <Link href="/history" passHref>
+              <Button variant="outline" size="icon" aria-label="Lihat Riwayat Resep">
+                <BookMarked className="h-5 w-5" />
+              </Button>
+            </Link>
+          </div>
         </div>
       </header>
 
