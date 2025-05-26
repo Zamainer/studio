@@ -58,9 +58,29 @@ const generateRecipeFlow = ai.defineFlow(
     inputSchema: GenerateRecipeInputSchema,
     outputSchema: GenerateRecipeOutputSchema,
   },
-  async input => {
-    const {output} = await generateRecipePrompt(input);
-    return output!;
+  async (input: GenerateRecipeInput): Promise<GenerateRecipeOutput> => {
+    try {
+      console.log('generateRecipeFlow: Memulai pembuatan resep dengan input:', input);
+      const result = await generateRecipePrompt(input);
+
+      if (!result.output) {
+        console.error('generateRecipeFlow: Output dari LLM adalah null atau undefined.', result);
+        throw new Error('Pembuatan resep gagal: Tidak ada output dari LLM.');
+      }
+      
+      // Validasi Zod secara implisit ditangani oleh output.schema dari definePrompt.
+      // Jika parsing gagal, error akan dilempar oleh generateRecipePrompt.
+      console.log('generateRecipeFlow: Resep berhasil dibuat:', result.output.recipeName);
+      return result.output;
+
+    } catch (error) {
+      console.error('generateRecipeFlow: Terjadi error saat menjalankan alur pembuatan resep:', error);
+      // Melempar ulang error agar dapat ditangkap oleh handler Server Action di Next.js
+      // dan juga tercatat di log fungsi Vercel dengan detail yang mungkin lebih banyak.
+      if (error instanceof Error) {
+        throw new Error(`Pembuatan resep gagal di server: ${error.message}`);
+      }
+      throw new Error('Pembuatan resep gagal di server karena kesalahan tidak diketahui.');
+    }
   }
 );
-
