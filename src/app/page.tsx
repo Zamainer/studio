@@ -54,7 +54,7 @@ export default function ScrapChefPage() {
 
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
-  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false);
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(true); // Set true initially for camera tab
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
@@ -136,16 +136,34 @@ export default function ScrapChefPage() {
   }, [activeStream]);
 
   useEffect(() => {
+    // Only manage camera when scan mode and camera tab are active
     if (inputMode === 'scan' && scanTabActiveView === 'camera') {
       setIsCameraLoading(true);
-      setHasCameraPermission(false); 
+      // setHasCameraPermission(false); // Reset permission status on tab switch to re-evaluate
+      
       const getCameraPermission = async () => {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          toast({
+            variant: 'destructive',
+            title: 'Kamera Tidak Didukung',
+            description: 'Browser Anda tidak mendukung akses kamera.',
+          });
+          setHasCameraPermission(false);
+          setIsCameraLoading(false);
+          return;
+        }
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ video: true });
           setActiveStream(stream);
           setHasCameraPermission(true);
           if (videoRef.current) {
             videoRef.current.srcObject = stream;
+            // Wait for video to load metadata to ensure dimensions are available
+            videoRef.current.onloadedmetadata = () => {
+              setIsCameraLoading(false); // Camera is ready once metadata is loaded
+            };
+          } else {
+            setIsCameraLoading(false); // videoRef not available
           }
         } catch (error) {
           console.error('Error accessing camera:', error);
@@ -155,17 +173,21 @@ export default function ScrapChefPage() {
             title: 'Akses Kamera Ditolak',
             description: 'Mohon aktifkan izin kamera di pengaturan browser Anda untuk menggunakan fitur ini.',
           });
-        } finally {
           setIsCameraLoading(false);
         }
       };
       getCameraPermission();
     } else {
       stopActiveStream();
+      setIsCameraLoading(false); // No longer loading if not in camera view
     }
 
+    // Cleanup function
     return () => {
       stopActiveStream();
+      if (videoRef.current) {
+        videoRef.current.onloadedmetadata = null; // Clean up event listener
+      }
     };
   }, [inputMode, scanTabActiveView, stopActiveStream, toast]);
 
@@ -180,13 +202,20 @@ export default function ScrapChefPage() {
       recognitionRef.current.stop();
     } else {
       try {
-        await navigator.mediaDevices.getUserMedia({ audio: true }); 
-        recognitionRef.current.start();
+        // Check for microphone permission before starting recognition
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            await navigator.mediaDevices.getUserMedia({ audio: true }); // Request permission
+            recognitionRef.current.start();
+        } else {
+            throw new Error("MediaDevices API not supported");
+        }
       } catch (err) {
         console.error('Microphone access denied or error', err);
         let userMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
         if ((err as Error).name === 'NotFoundError' || (err as Error).name === 'DevicesNotFoundError' ) {
             userMessage = "Mikrofon tidak ditemukan. Pastikan mikrofon terpasang dengan benar.";
+        } else if ((err as Error).message === "MediaDevices API not supported") {
+            userMessage = "Fitur mikrofon tidak didukung di browser ini."
         }
         setError(userMessage);
         toast({ variant: "destructive", title: "Kesalahan Mikrofon", description: userMessage });
@@ -211,27 +240,37 @@ export default function ScrapChefPage() {
   };
 
   const handleTakePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext('2d');
-      if (context) {
-        context.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataUri = canvas.toDataURL('image/png');
-        setImagePreview(dataUri);
-        setSelectedFile(null); 
-        setScanTabActiveView('upload'); 
-        stopActiveStream(); 
-        setHasCameraPermission(false); 
-      } else {
-        setError("Gagal mengambil konteks canvas.");
-        toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
-      }
+    if (!videoRef.current || !canvasRef.current) {
+      setError("Komponen kamera tidak siap. Coba aktifkan ulang tab kamera.");
+      toast({ variant: "destructive", title: "Error Kamera", description: "Komponen kamera tidak ditemukan. Coba muat ulang atau aktifkan ulang tab kamera." });
+      return;
+    }
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+
+    // Check if video stream is ready and has dimensions
+    if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0) {
+      setError("Kamera belum siap atau feed video bermasalah. Mohon tunggu sebentar dan coba lagi.");
+      toast({ variant: "destructive", title: "Kamera Belum Siap", description: "Feed video belum sepenuhnya dimuat. Tunggu beberapa saat dan coba lagi." });
+      return;
+    }
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const context = canvas.getContext('2d');
+
+    if (context) {
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUri = canvas.toDataURL('image/png');
+      setImagePreview(dataUri);
+      setSelectedFile(null); 
+      setScanTabActiveView('upload'); // Switch to upload tab to show the preview
+      stopActiveStream(); // Stop camera stream after taking photo
+      setError(null); // Clear any previous errors
     } else {
-       setError("Referensi video atau canvas tidak ditemukan.");
-       toast({ variant: "destructive", title: "Error Kamera", description: "Komponen kamera tidak siap." });
+      setError("Gagal mengambil konteks canvas untuk memproses gambar.");
+      toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
     }
   };
 
@@ -269,6 +308,7 @@ export default function ScrapChefPage() {
   const handleGenerateRecipe = async () => {
     if (!ingredientsText.trim()) {
       setError("Silakan masukkan atau deteksi beberapa bahan terlebih dahulu.");
+      toast({ variant: "destructive", title: "Bahan Kosong", description: "Masukkan bahan sebelum membuat resep." });
       return;
     }
     setIsLoadingRecipe(true);
@@ -307,18 +347,17 @@ export default function ScrapChefPage() {
         const existingRecipesRaw = localStorage.getItem('scrapchef_recipes');
         const existingRecipes: SavedRecipe[] = existingRecipesRaw ? JSON.parse(existingRecipesRaw) : [];
         
-        // Hindari duplikasi berdasarkan nama resep dan tanggal (sederhana, bisa lebih canggih)
-        const isDuplicate = existingRecipes.some(r => r.recipeName === newRecipeToSave.recipeName && r.dateSaved === newRecipeToSave.dateSaved);
+        const isDuplicate = existingRecipes.some(r => r.recipeName === newRecipeToSave.recipeName && r.ingredientsInput === newRecipeToSave.ingredientsInput);
         if (isDuplicate) {
             toast({
                 variant: "default",
                 title: "Resep Sudah Disimpan",
-                description: `${recipe.recipeName} sepertinya sudah ada di riwayat Anda.`,
+                description: `${recipe.recipeName} dengan bahan serupa sepertinya sudah ada di riwayat Anda.`,
             });
             return;
         }
 
-        existingRecipes.unshift(newRecipeToSave); // Add to the beginning of the list
+        existingRecipes.unshift(newRecipeToSave); 
         localStorage.setItem('scrapchef_recipes', JSON.stringify(existingRecipes));
         toast({
           title: "Resep Disimpan!",
@@ -408,10 +447,10 @@ export default function ScrapChefPage() {
 
                 {scanTabActiveView === 'upload' && (
                   <div>
-                    <Input type="file" accept="image/*" onChange={handleFileChange} className="file:text-primary file:font-semibold" data-ai-hint="food items" />
+                    <Input type="file" accept="image/*" onChange={handleFileChange} className="file:text-primary file:font-semibold" data-ai-hint="food items various" />
                     {imagePreview && (
                       <div className="mt-4 border rounded-md overflow-hidden aspect-video relative w-full">
-                        <Image src={imagePreview} alt="Pratinjau Bahan" layout="fill" objectFit="contain" data-ai-hint="food ingredients"/>
+                        <Image src={imagePreview} alt="Pratinjau Bahan" layout="fill" objectFit="contain" data-ai-hint="food ingredients preview"/>
                       </div>
                     )}
                   </div>
@@ -419,9 +458,9 @@ export default function ScrapChefPage() {
 
                 {scanTabActiveView === 'camera' && (
                   <div className="space-y-4">
-                    <div className="border rounded-md overflow-hidden aspect-video relative w-full bg-muted">
+                    <div className="border rounded-md overflow-hidden aspect-video relative w-full bg-muted flex items-center justify-center">
                       <video ref={videoRef} className="w-full h-full object-contain" autoPlay muted playsInline data-ai-hint="live camera feed" />
-                      {isCameraLoading && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><Loader2 className="h-8 w-8 text-white animate-spin" /></div>}
+                      {isCameraLoading && hasCameraPermission && <div className="absolute inset-0 flex items-center justify-center bg-black/50"><Loader2 className="h-8 w-8 text-white animate-spin" /></div>}
                     </div>
                     
                     {!isCameraLoading && !hasCameraPermission && (
@@ -429,22 +468,24 @@ export default function ScrapChefPage() {
                           <AlertCircle className="h-4 w-4" />
                           <AlertTitle>Akses Kamera Diperlukan</AlertTitle>
                           <AlertDescription>
-                            Izinkan akses kamera di browser Anda untuk menggunakan fitur ini. Jika sudah, coba muat ulang halaman.
+                            Izinkan akses kamera di browser Anda untuk menggunakan fitur ini. Jika sudah diizinkan dan masih bermasalah, coba muat ulang halaman.
                           </AlertDescription>
                         </Alert>
                     )}
 
-                    <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission} className="w-full" data-ai-hint="capture photo">
+                    <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission} className="w-full" data-ai-hint="capture ingredient photo">
                       <Camera className="mr-2 h-4 w-4" /> Ambil Gambar
                     </Button>
                   </div>
                 )}
                 <canvas ref={canvasRef} className="hidden"></canvas> 
                 
-                <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
-                  {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                  Analisis Gambar
-                </Button>
+                {(scanTabActiveView === 'upload' || imagePreview) && ( // Show analyze button if in upload tab OR if there's an image preview (from camera)
+                  <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
+                    {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                    Analisis Gambar
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -453,7 +494,7 @@ export default function ScrapChefPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Masukkan Bahan Secara Manual</CardTitle>
-                <CardDescription>Ketik bahan-bahan yang Anda miliki.</CardDescription>
+                <CardDescription>Ketik bahan-bahan yang Anda miliki, pisahkan dengan koma.</CardDescription>
               </CardHeader>
               <CardContent>
                  <p className="text-sm text-muted-foreground">Daftar bahan akan muncul di bawah setelah Anda menambahkannya.</p>
@@ -465,7 +506,7 @@ export default function ScrapChefPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Masukkan Bahan via Suara</CardTitle>
-                <CardDescription>Klik tombol di bawah dan sebutkan bahan-bahan Anda satu per satu.</CardDescription>
+                <CardDescription>Klik tombol di bawah dan sebutkan bahan-bahan Anda satu per satu. Bicara dengan jelas.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 flex flex-col items-center">
                 <Button onClick={handleToggleListening} variant={isListening ? "destructive" : "default"} className="w-full max-w-xs">
@@ -490,11 +531,11 @@ export default function ScrapChefPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Bahan-bahan Anda</CardTitle>
               <CardDescription>
-                {inputMode === 'scan' && ingredientsText && imagePreview ? "Bahan terdeteksi/diambil. Edit jika perlu." : 
-                 inputMode === 'scan' && !ingredientsText && imagePreview ? "Gambar siap dianalisis. Edit bahan setelahnya jika perlu." :
-                 inputMode === 'scan' && !ingredientsText && !imagePreview && scanTabActiveView === 'camera' && hasCameraPermission ? "Arahkan kamera ke bahan dan ambil gambar." :
-                 inputMode === 'scan' && !ingredientsText && !imagePreview && scanTabActiveView === 'upload' ? "Unggah gambar bahan Anda." :
-                 inputMode === 'voice' && ingredientsText ? "Bahan dari suara. Edit jika perlu." :
+                {ingredientsText ? "Periksa dan edit daftar bahan Anda di bawah ini." : 
+                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && !hasCameraPermission ? "Izinkan akses kamera dan pastikan kamera berfungsi." :
+                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'camera' && hasCameraPermission && !isCameraLoading ? "Arahkan kamera ke bahan dan ambil gambar." :
+                  inputMode === 'scan' && !imagePreview && scanTabActiveView === 'upload' ? "Unggah gambar bahan Anda." :
+                  inputMode === 'voice' ? "Mulai berbicara untuk menambahkan bahan atau edit di bawah." :
                  "Masukkan bahan Anda, pisahkan dengan koma."
                 }
               </CardDescription>
@@ -595,3 +636,4 @@ export default function ScrapChefPage() {
     </div>
   );
 }
+
