@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, X, Volume2, VolumeX } from "lucide-react";
 import type { GenerateRecipeOutput } from "@/ai/flows/generate-recipe";
-import { useToast } from "@/hooks/use-toast"; // Ditambahkan untuk notifikasi
+import { useToast } from "@/hooks/use-toast";
 
 interface CookingModeModalProps {
   isOpen: boolean;
@@ -19,7 +19,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
   const [currentStepIndex, setCurrentStepIndex] = useState<number>(0);
   const [isTtsEnabled, setIsTtsEnabled] = useState<boolean>(true);
   const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
-  const { toast } = useToast(); // Inisialisasi toast
+  const { toast } = useToast();
 
   const speak = useCallback((text: string) => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -71,7 +71,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
       window.speechSynthesis.cancel(); // Batalkan ucapan sebelumnya
       window.speechSynthesis.speak(utterance);
     }
-  }, [toast]); // Tambahkan toast sebagai dependensi useCallback
+  }, [toast]);
 
   const stopSpeaking = useCallback(() => {
     if (typeof window !== 'undefined' && window.speechSynthesis) {
@@ -90,6 +90,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
       if (parsedSteps.length > 0) {
         setSteps(parsedSteps);
       } else {
+        // Fallback jika parsing dengan regex gagal, coba split per baris
         setSteps(recipe.instructions.split('\n').map(s => s.trim()).filter(s => s.length > 0));
       }
     } else {
@@ -104,8 +105,10 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
     } else {
       stopSpeaking(); 
     }
-  }, [isOpen, isTtsEnabled, currentStepIndex, steps, speak, stopSpeaking]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [isOpen, isTtsEnabled, currentStepIndex, steps, speak]); // `stopSpeaking` is stable, can be omitted if causing re-runs
 
+  // Cleanup when component unmounts or TTS is disabled
   useEffect(() => {
     return () => {
       if (isSpeaking) { 
@@ -114,6 +117,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
     };
   }, [stopSpeaking, isSpeaking]);
   
+  // Ensure speech stops if the modal is closed
   useEffect(() => {
     if (!isOpen) {
       stopSpeaking();
@@ -132,7 +136,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
   const toggleTts = () => {
     setIsTtsEnabled(prev => {
       const newState = !prev;
-      if (!newState) { 
+      if (!newState) { // If TTS is being disabled
         stopSpeaking();
       }
       return newState;
@@ -144,7 +148,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!open) {
-        stopSpeaking(); 
+        stopSpeaking(); // Pastikan suara berhenti saat dialog ditutup
         onClose();
       }
     }}>
@@ -179,7 +183,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
               <span className="sr-only">{isTtsEnabled ? "Matikan Suara" : "Aktifkan Suara"}</span>
             </Button>
             <Button variant="ghost" onClick={() => {
-              stopSpeaking(); 
+              stopSpeaking(); // Pastikan suara berhenti saat dialog ditutup secara manual
               onClose();
             }} className="w-auto">
               <X className="mr-2 h-4 w-4" /> Tutup
