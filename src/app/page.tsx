@@ -1,9 +1,10 @@
+
 "use client";
 
 import type { ChangeEvent } from "react";
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks } from "lucide-react";
+import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks, Mic } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +18,16 @@ import { analyzeImageForIngredients, type AnalyzeImageForIngredientsOutput } fro
 import { generateRecipe, type GenerateRecipeOutput } from "@/ai/flows/generate-recipe";
 import CookingModeModal from "@/components/scrapchef/cooking-mode-modal";
 
+// Extend Window interface for SpeechRecognition
+declare global {
+  interface Window {
+    SpeechRecognition: typeof SpeechRecognition | undefined;
+    webkitSpeechRecognition: typeof SpeechRecognition | undefined;
+  }
+}
+
 export default function ScrapChefPage() {
-  const [inputMode, setInputMode] = useState<"scan" | "text">("scan");
+  const [inputMode, setInputMode] = useState<"scan" | "text" | "voice">("scan");
   const [ingredientsText, setIngredientsText] = useState<string>("");
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -31,7 +40,107 @@ export default function ScrapChefPage() {
 
   const [showCookingMode, setShowCookingMode] = useState<boolean>(false);
 
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) {
+      const SpeechRecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognitionAPI) {
+        recognitionRef.current = new SpeechRecognitionAPI();
+        recognitionRef.current.continuous = false; // Process after a pause
+        recognitionRef.current.interimResults = false; // Only final results
+        recognitionRef.current.lang = 'id-ID'; // Set to Indonesian, adjust as needed
+
+        recognitionRef.current.onstart = () => {
+          setIsListening(true);
+          setError(null);
+          toast({ title: "Mendengarkan...", description: "Sebutkan bahan-bahan Anda." });
+        };
+
+        recognitionRef.current.onresult = (event) => {
+          const currentTranscript = event.results[event.results.length - 1][0].transcript;
+          setIngredientsText(prev => {
+            const newText = prev ? `${prev}, ${currentTranscript}` : currentTranscript;
+            // Sanitize potential double commas or leading/trailing commas
+            return newText.replace(/, ,/g, ',').replace(/^,|,$/g, '').trim();
+          });
+          toast({ title: "Bahan Ditambahkan!", description: `"${currentTranscript}" berhasil ditambahkan.` });
+        };
+
+        recognitionRef.current.onerror = (event) => {
+          console.error('Speech recognition error', event.error);
+          let errMessage = "Terjadi kesalahan pada pengenalan suara.";
+          if (event.error === 'no-speech') {
+            errMessage = "Tidak ada suara terdeteksi. Silakan coba lagi.";
+          } else if (event.error === 'audio-capture') {
+            errMessage = "Masalah dengan mikrofon. Silakan periksa mikrofon Anda.";
+          } else if (event.error === 'not-allowed') {
+            errMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
+          } else if (event.error === 'network') {
+            errMessage = "Masalah jaringan. Pengenalan suara membutuhkan koneksi internet.";
+          }
+          setError(errMessage);
+          toast({ variant: "destructive", title: "Kesalahan Input Suara", description: errMessage });
+          setIsListening(false); // Ensure listening stops on error
+        };
+
+        recognitionRef.current.onend = () => {
+          setIsListening(false);
+        };
+      } else {
+         setError("Pengenalan suara tidak didukung di browser ini.");
+      }
+    } else {
+      console.warn("Speech recognition not supported in this browser.");
+       //setError("Pengenalan suara tidak didukung di browser ini."); // Optionally inform user
+    }
+
+    // Cleanup function
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, [toast]); // Added toast to dependencies
+
+  // Effect to stop listening if input mode changes away from voice or component unmounts
+  useEffect(() => {
+    if (inputMode !== 'voice' && isListening && recognitionRef.current) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    }
+  }, [inputMode, isListening]);
+
+
+  const handleToggleListening = async () => {
+    if (!recognitionRef.current) {
+      setError("Pengenalan suara tidak tersedia atau belum siap.");
+      toast({ variant: "destructive", title: "Kesalahan Input Suara", description: "Pengenalan suara tidak tersedia." });
+      return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      try {
+        // Ensure microphone permission
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        recognitionRef.current.start();
+      } catch (err) {
+        console.error('Microphone access denied or error', err);
+        let userMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
+        if ((err as Error).name === 'NotFoundError' || (err as Error).name === 'DevicesNotFoundError' ) {
+            userMessage = "Mikrofon tidak ditemukan. Pastikan mikrofon terpasang dengan benar.";
+        }
+        setError(userMessage);
+        toast({ variant: "destructive", title: "Kesalahan Mikrofon", description: userMessage });
+        setIsListening(false);
+      }
+    }
+  };
+
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -42,8 +151,8 @@ export default function ScrapChefPage() {
         setImagePreview(reader.result as string);
       };
       reader.readAsDataURL(file);
-      setIngredientsText(""); // Clear previous ingredients
-      setRecipe(null); // Clear previous recipe
+      // setIngredientsText(""); // Keep existing ingredients when switching to scan then back
+      setRecipe(null); 
       setError(null);
     }
   };
@@ -55,10 +164,13 @@ export default function ScrapChefPage() {
     }
     setIsLoadingIngredients(true);
     setError(null);
-    setRecipe(null);
+    // setRecipe(null); // Keep recipe if user is just adding more ingredients
     try {
       const result: AnalyzeImageForIngredientsOutput = await analyzeImageForIngredients({ photoDataUri: imagePreview });
-      setIngredientsText(result.ingredients.join(", "));
+      setIngredientsText(prev => {
+        const newIngredients = result.ingredients.join(", ");
+        return prev ? `${prev}, ${newIngredients}` : newIngredients;
+      });
       toast({
         title: "Ingredients Detected!",
         description: "Review and edit the ingredients if needed.",
@@ -131,17 +243,18 @@ export default function ScrapChefPage() {
       </header>
 
       <main className="w-full max-w-2xl space-y-8">
-        <Tabs value={inputMode} onValueChange={(value) => setInputMode(value as "scan" | "text")} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="scan" className="gap-2"><Camera className="h-4 w-4" /> Scan Ingredients</TabsTrigger>
-            <TabsTrigger value="text" className="gap-2"><Keyboard className="h-4 w-4" /> Enter Manually</TabsTrigger>
+        <Tabs value={inputMode} onValueChange={(value) => setInputMode(value as "scan" | "text" | "voice")} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="scan" className="gap-2"><Camera className="h-4 w-4" /> Scan</TabsTrigger>
+            <TabsTrigger value="text" className="gap-2"><Keyboard className="h-4 w-4" /> Tulis</TabsTrigger>
+            <TabsTrigger value="voice" className="gap-2"><Mic className="h-4 w-4" /> Suara</TabsTrigger>
           </TabsList>
           
           <TabsContent value="scan" className="mt-6">
             <Card>
               <CardHeader>
-                <CardTitle>Scan Ingredients with Camera</CardTitle>
-                <CardDescription>Upload a photo of your ingredients, and we&apos;ll detect them for you.</CardDescription>
+                <CardTitle>Scan Bahan via Kamera</CardTitle>
+                <CardDescription>Unggah foto bahan-bahan Anda, dan kami akan mendeteksinya.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Input type="file" accept="image/*" onChange={handleFileChange} className="file:text-primary file:font-semibold" data-ai-hint="food items" />
@@ -152,7 +265,7 @@ export default function ScrapChefPage() {
                 )}
                 <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full">
                   {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                  Analyze Image
+                  Analisis Gambar
                 </Button>
               </CardContent>
             </Card>
@@ -161,28 +274,57 @@ export default function ScrapChefPage() {
           <TabsContent value="text" className="mt-6">
             <Card>
               <CardHeader>
-                <CardTitle>Enter Ingredients Manually</CardTitle>
-                <CardDescription>Type in the ingredients you have available.</CardDescription>
+                <CardTitle>Masukkan Bahan Secara Manual</CardTitle>
+                <CardDescription>Ketik bahan-bahan yang Anda miliki.</CardDescription>
               </CardHeader>
               <CardContent>
-                 {/* This section is part of the "text" tab but will also show ingredients from scan */}
+                 {/* This section is part of the "text" tab but the ingredients Textarea is now common */}
+                 <p className="text-sm text-muted-foreground">Daftar bahan akan muncul di bawah setelah Anda menambahkannya.</p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="voice" className="mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Masukkan Bahan via Suara</CardTitle>
+                <CardDescription>Klik tombol di bawah dan sebutkan bahan-bahan Anda satu per satu.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 flex flex-col items-center">
+                <Button onClick={handleToggleListening} variant={isListening ? "destructive" : "default"} className="w-full max-w-xs">
+                  {isListening ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Mic className="mr-2 h-4 w-4" />}
+                  {isListening ? "Berhenti Mendengarkan..." : "Mulai Mendengarkan"}
+                </Button>
+                 {isListening && <p className="text-sm text-muted-foreground mt-2">Mendengarkan...</p>}
+                 {!recognitionRef.current && typeof window !== 'undefined' && !('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) && (
+                    <Alert variant="destructive" className="mt-4">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertTitle>Fitur Tidak Didukung</AlertTitle>
+                        <AlertDescription>Pengenalan suara tidak didukung oleh browser Anda. Coba gunakan browser lain seperti Chrome atau Edge.</AlertDescription>
+                    </Alert>
+                 )}
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
         
         {/* Common area for ingredients text and recipe generation button */}
-        {(inputMode === 'scan' && ingredientsText) || inputMode === 'text' ? (
+        {/* This area will show if there are ingredients OR if the mode is text/voice, encouraging input */}
+        {(ingredientsText || inputMode === 'text' || inputMode === 'voice' || (inputMode === 'scan' && imagePreview)) && (
           <Card className="mt-0">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Your Ingredients</CardTitle>
+              <CardTitle className="flex items-center gap-2"><Edit3 className="h-5 w-5 text-primary"/> Bahan-bahan Anda</CardTitle>
               <CardDescription>
-                {inputMode === 'scan' && ingredientsText ? "Detected ingredients. Edit if needed." : "Enter your ingredients, separated by commas."}
+                {inputMode === 'scan' && ingredientsText && !imagePreview ? "Bahan terdeteksi. Edit jika perlu." : 
+                 inputMode === 'scan' && !ingredientsText && imagePreview ? "Analisis gambar untuk melihat bahan." :
+                 inputMode === 'voice' && ingredientsText ? "Bahan dari suara. Edit jika perlu." :
+                 "Masukkan bahan Anda, pisahkan dengan koma."
+                }
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Textarea
-                placeholder="e.g., chicken breast, broccoli, soy sauce, garlic"
+                placeholder="contoh: dada ayam, brokoli, kecap asin, bawang putih"
                 value={ingredientsText}
                 onChange={(e) => setIngredientsText(e.target.value)}
                 rows={4}
@@ -190,15 +332,15 @@ export default function ScrapChefPage() {
               />
               <Button onClick={handleGenerateRecipe} disabled={isLoadingRecipe || !ingredientsText.trim()} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
                 {isLoadingRecipe ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Lightbulb className="mr-2 h-4 w-4" />}
-                Get Recipe
+                Dapatkan Resep
               </Button>
             </CardContent>
           </Card>
-        ) : null}
+        )}
 
 
         {error && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" className="mt-4">
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{error}</AlertDescription>
@@ -230,15 +372,15 @@ export default function ScrapChefPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2"><ListChecks className="h-5 w-5 text-accent" /> Ingredients</h3>
+                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2"><ListChecks className="h-5 w-5 text-accent" /> Bahan-bahan</h3>
                 <div className="text-sm text-muted-foreground bg-secondary/30 p-3 rounded-md shadow-inner">
-                  {formatMultilineText(recipe.ingredientsList) || "No ingredients listed."}
+                  {formatMultilineText(recipe.ingredientsList) || "Tidak ada bahan yang terdaftar."}
                 </div>
               </div>
               <div>
-                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2"><ChefHat className="h-5 w-5 text-accent" /> Instructions</h3>
+                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2"><ChefHat className="h-5 w-5 text-accent" /> Instruksi</h3>
                 <div className="text-sm text-muted-foreground space-y-2 bg-secondary/30 p-3 rounded-md shadow-inner">
-                  {formatMultilineText(recipe.instructions) || "No instructions provided."}
+                  {formatMultilineText(recipe.instructions) || "Tidak ada instruksi yang diberikan."}
                 </div>
               </div>
               {recipe.additionalTips && (
@@ -252,10 +394,10 @@ export default function ScrapChefPage() {
             </CardContent>
             <CardFooter className="flex flex-col sm:flex-row justify-end gap-2">
               <Button variant="outline" onClick={handleSaveRecipe} className="w-full sm:w-auto">
-                <Heart className="mr-2 h-4 w-4" /> Save Recipe
+                <Heart className="mr-2 h-4 w-4" /> Simpan Resep
               </Button>
               <Button onClick={() => setShowCookingMode(true)} className="w-full sm:w-auto bg-primary hover:bg-primary/90">
-                <PlayCircle className="mr-2 h-4 w-4" /> Start Cooking Mode
+                <PlayCircle className="mr-2 h-4 w-4" /> Mode Memasak
               </Button>
             </CardFooter>
           </Card>
@@ -271,8 +413,9 @@ export default function ScrapChefPage() {
       )}
 
       <footer className="mt-12 text-center text-sm text-muted-foreground">
-        <p>&copy; {new Date().getFullYear()} ScrapChef. Cook with what you have!</p>
+        <p>&copy; {new Date().getFullYear()} ScrapChef. Masak dengan apa yang ada!</p>
       </footer>
     </div>
   );
 }
+
