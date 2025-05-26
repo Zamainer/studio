@@ -29,13 +29,16 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
       utterance.onend = () => setIsSpeaking(false);
       
       utterance.onerror = (event: SpeechSynthesisErrorEvent) => {
-        console.error("Speech synthesis error:", event.error, "Event object:", event);
         setIsSpeaking(false);
 
-        // Jangan tampilkan toast untuk 'canceled' atau 'interrupted' karena bisa jadi operasi normal
+        // Jangan tampilkan toast atau console.error untuk 'canceled' atau 'interrupted'
         if (event.error === 'canceled' || event.error === 'interrupted') {
+          console.log(`Speech synthesis event: ${event.error}`); // Log untuk debugging jika perlu
           return;
         }
+        
+        // Log error yang sebenarnya ke konsol
+        console.error("Speech synthesis error:", event.error, "Event object:", event);
 
         let userMessage = "Gagal membacakan langkah.";
         switch (event.error) {
@@ -53,10 +56,10 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
             userMessage = "Tidak dapat memproses suara untuk langkah ini.";
             break;
           case 'language-unavailable':
-            userMessage = "Bahasa yang diperlukan untuk pembacaan suara tidak tersedia di perangkat Anda.";
+            userMessage = "Bahasa yang diperlukan untuk pembacaan suara (Bahasa Indonesia) tidak tersedia di perangkat Anda.";
             break;
           case 'voice-unavailable':
-            userMessage = "Suara yang diperlukan untuk pembacaan tidak tersedia di perangkat Anda.";
+            userMessage = "Suara yang diperlukan untuk pembacaan (Bahasa Indonesia) tidak tersedia di perangkat Anda.";
             break;
           default:
             userMessage = `Terjadi kesalahan saat mencoba membacakan langkah (${event.error || 'tidak diketahui'}).`;
@@ -106,9 +109,8 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
       stopSpeaking(); 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [isOpen, isTtsEnabled, currentStepIndex, steps, speak]); // `stopSpeaking` is stable, can be omitted if causing re-runs
+  }, [isOpen, isTtsEnabled, currentStepIndex, steps, speak]); // `stopSpeaking` is stable
 
-  // Cleanup when component unmounts or TTS is disabled
   useEffect(() => {
     return () => {
       if (isSpeaking) { 
@@ -117,7 +119,6 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
     };
   }, [stopSpeaking, isSpeaking]);
   
-  // Ensure speech stops if the modal is closed
   useEffect(() => {
     if (!isOpen) {
       stopSpeaking();
@@ -136,7 +137,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
   const toggleTts = () => {
     setIsTtsEnabled(prev => {
       const newState = !prev;
-      if (!newState) { // If TTS is being disabled
+      if (!newState) { 
         stopSpeaking();
       }
       return newState;
@@ -148,7 +149,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
   return (
     <Dialog open={isOpen} onOpenChange={(open) => {
       if (!open) {
-        stopSpeaking(); // Pastikan suara berhenti saat dialog ditutup
+        stopSpeaking(); 
         onClose();
       }
     }}>
@@ -183,7 +184,7 @@ export default function CookingModeModal({ isOpen, onClose, recipe }: CookingMod
               <span className="sr-only">{isTtsEnabled ? "Matikan Suara" : "Aktifkan Suara"}</span>
             </Button>
             <Button variant="ghost" onClick={() => {
-              stopSpeaking(); // Pastikan suara berhenti saat dialog ditutup secara manual
+              stopSpeaking(); 
               onClose();
             }} className="w-auto">
               <X className="mr-2 h-4 w-4" /> Tutup

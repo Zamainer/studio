@@ -20,10 +20,10 @@ const GenerateRecipeInputSchema = z.object({
 export type GenerateRecipeInput = z.infer<typeof GenerateRecipeInputSchema>;
 
 const GenerateRecipeOutputSchema = z.object({
-  recipeName: z.string().describe('The name of the generated recipe.'),
-  ingredientsList: z.string().describe('A list of ingredients required for the recipe.'),
-  instructions: z.string().describe('Step-by-step instructions for preparing the recipe.'),
-  additionalTips: z.string().optional().describe('Optional tips for the recipe.'),
+  recipeName: z.string().describe('The name of the generated recipe, in Indonesian.'),
+  ingredientsList: z.string().describe('A list of ingredients required for the recipe, in Indonesian, formatted as a multi-line string.'),
+  instructions: z.string().describe('Step-by-step instructions for preparing the recipe, in Indonesian, formatted as a multi-line string with each step numbered or bulleted.'),
+  additionalTips: z.string().optional().describe('Optional tips for the recipe, in Indonesian.'),
 });
 
 export type GenerateRecipeOutput = z.infer<typeof GenerateRecipeOutputSchema>;
@@ -36,18 +36,20 @@ const generateRecipePrompt = ai.definePrompt({
   name: 'generateRecipePrompt',
   input: {schema: GenerateRecipeInputSchema},
   output: {schema: GenerateRecipeOutputSchema},
-  prompt: `You are a chef specializing in creating recipes based on user-provided ingredients.
+  prompt: `Anda adalah seorang koki yang berspesialisasi dalam membuat resep berdasarkan bahan-bahan yang disediakan pengguna.
 
-  The user will provide a list of ingredients they have available. Your task is to generate a recipe using those ingredients.
-  The recipe should include a recipe name, a list of ingredients, step-by-step instructions, and optional additional tips.
+  Pengguna akan memberikan daftar bahan yang mereka miliki. Tugas Anda adalah membuat resep menggunakan bahan-bahan tersebut.
+  Resep harus ditulis sepenuhnya dalam Bahasa Indonesia.
+  Resep harus mencakup nama resep, daftar bahan (sebagai string multi-baris), instruksi langkah demi langkah (sebagai string multi-baris, setiap langkah diberi nomor atau poin), dan tips tambahan opsional.
 
-  Ingredients provided by the user: {{{ingredients}}}
+  Bahan-bahan yang disediakan oleh pengguna: {{{ingredients}}}
 
-  Please provide the recipe in the following format:
-  Recipe Name: [Recipe Name]
-  Ingredients: [List of Ingredients]
-  Instructions: [Step-by-step instructions]
-  Tips: [Optional tips]`,
+  Pastikan seluruh output (nama resep, daftar bahan, instruksi, dan tips) dalam Bahasa Indonesia.
+  Format output yang diharapkan:
+  Nama Resep: [Nama Resep dalam Bahasa Indonesia]
+  Bahan-bahan: [Daftar Bahan dalam Bahasa Indonesia, format multi-baris]
+  Instruksi: [Instruksi langkah demi langkah dalam Bahasa Indonesia, format multi-baris]
+  Tips: [Tips opsional dalam Bahasa Indonesia]`,
 });
 
 const generateRecipeFlow = ai.defineFlow(
@@ -61,3 +63,4 @@ const generateRecipeFlow = ai.defineFlow(
     return output!;
   }
 );
+
