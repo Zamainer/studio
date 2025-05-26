@@ -4,7 +4,8 @@
 import type { ChangeEvent } from "react";
 import React, { useState, useEffect, useRef } from "react";
 import Image from "next/image";
-import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks, Mic } from "lucide-react";
+import Link from 'next/link'; // Ditambahkan untuk navigasi
+import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks, Mic, BookMarked } from "lucide-react"; // Ditambahkan BookMarked
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -151,7 +152,6 @@ export default function ScrapChefPage() {
         setImagePreview(reader.result as string);
       };
       reader.readAsDataURL(file);
-      // setIngredientsText(""); // Keep existing ingredients when switching to scan then back
       setRecipe(null); 
       setError(null);
     }
@@ -164,7 +164,6 @@ export default function ScrapChefPage() {
     }
     setIsLoadingIngredients(true);
     setError(null);
-    // setRecipe(null); // Keep recipe if user is just adding more ingredients
     try {
       const result: AnalyzeImageForIngredientsOutput = await analyzeImageForIngredients({ photoDataUri: imagePreview });
       setIngredientsText(prev => {
@@ -217,10 +216,11 @@ export default function ScrapChefPage() {
   };
 
   const handleSaveRecipe = () => {
+    // TODO: Implement actual save logic (e.g., to localStorage or backend)
     if (recipe) {
       toast({
-        title: "Recipe Saved (Mock)",
-        description: `${recipe.recipeName} has been notionally saved! Full save functionality coming soon.`,
+        title: "Resep Disimpan (Mock)",
+        description: `${recipe.recipeName} telah disimpan (sementara). Fitur penyimpanan penuh akan datang!`,
       });
     }
   };
@@ -234,12 +234,22 @@ export default function ScrapChefPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center p-4 md:p-8 bg-background font-sans">
-      <header className="mb-8 text-center">
-        <div className="flex items-center justify-center space-x-2">
-          <ChefHat className="h-10 w-10 text-primary" />
-          <h1 className="text-4xl font-bold text-primary">ScrapChef</h1>
+      <header className="mb-8 text-center w-full max-w-2xl">
+        <div className="flex items-center justify-between">
+          <div className="w-10 h-10"></div> {/* Spacer for balance, can be a back button on other pages */}
+          <div className="flex flex-col items-center">
+            <div className="flex items-center justify-center space-x-2">
+              <ChefHat className="h-10 w-10 text-primary" />
+              <h1 className="text-4xl font-bold text-primary">ScrapChef</h1>
+            </div>
+            <p className="text-muted-foreground mt-2">Resep Instan dari Sisa Bahan Kulkas Anda!</p>
+          </div>
+          <Link href="/history" passHref>
+            <Button variant="outline" size="icon" aria-label="Lihat Riwayat Resep">
+              <BookMarked className="h-5 w-5" />
+            </Button>
+          </Link>
         </div>
-        <p className="text-muted-foreground mt-2">Resep Instan dari Sisa Bahan Kulkas Anda!</p>
       </header>
 
       <main className="w-full max-w-2xl space-y-8">
@@ -278,7 +288,6 @@ export default function ScrapChefPage() {
                 <CardDescription>Ketik bahan-bahan yang Anda miliki.</CardDescription>
               </CardHeader>
               <CardContent>
-                 {/* This section is part of the "text" tab but the ingredients Textarea is now common */}
                  <p className="text-sm text-muted-foreground">Daftar bahan akan muncul di bawah setelah Anda menambahkannya.</p>
               </CardContent>
             </Card>
@@ -308,8 +317,6 @@ export default function ScrapChefPage() {
           </TabsContent>
         </Tabs>
         
-        {/* Common area for ingredients text and recipe generation button */}
-        {/* This area will show if there are ingredients OR if the mode is text/voice, encouraging input */}
         {(ingredientsText || inputMode === 'text' || inputMode === 'voice' || (inputMode === 'scan' && imagePreview)) && (
           <Card className="mt-0">
             <CardHeader>
@@ -418,4 +425,3 @@ export default function ScrapChefPage() {
     </div>
   );
 }
-
