@@ -5,7 +5,7 @@ import type { ChangeEvent } from "react";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
 import Link from 'next/link';
-import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks, Mic, BookMarked, UploadCloud, Video } from "lucide-react";
+import { ChefHat, Camera, Keyboard, Loader2, Sparkles, Lightbulb, Edit3, AlertCircle, Heart, PlayCircle, ListChecks, Mic, BookMarked, UploadCloud, Video, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,7 +30,7 @@ declare global {
 interface SavedRecipe extends GenerateRecipeOutput {
   id: string;
   dateSaved: string;
-  ingredientsInput: string; // The original ingredients text used for generation
+  ingredientsInput: string; 
   imageUrl?: string;
   dataAiHint?: string;
 }
@@ -56,10 +56,13 @@ export default function ScrapChefPage() {
 
   const [scanTabActiveView, setScanTabActiveView] = useState<'upload' | 'camera'>('upload');
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean>(false);
-  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(false); 
+  const [isCameraLoading, setIsCameraLoading] = useState<boolean>(true); 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null); 
   const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
+  
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState<string | undefined>(undefined);
 
 
   useEffect(() => {
@@ -117,7 +120,6 @@ export default function ScrapChefPage() {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      // activeStream cleanup is handled in the other useEffect
     };
   }, [toast]); 
 
@@ -139,127 +141,122 @@ export default function ScrapChefPage() {
     }
   }, [activeStream]);
 
-  useEffect(() => {
-    let isEffectMounted = true;
+  const startCameraStream = useCallback(async (deviceId?: string) => {
+    stopActiveStream();
+    setIsCameraLoading(true);
+    setHasCameraPermission(false); // Reset permission, will be set on success
 
-    if (inputMode === 'scan' && scanTabActiveView === 'camera') {
-      if (!activeStream) { // Only attempt to initialize if no active stream
-        setIsCameraLoading(true);
-        setHasCameraPermission(false); // Reset permission status for this attempt
-        console.log("Attempting to initialize camera...");
-
-        const initializeCamera = async () => {
-          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            if (isEffectMounted) {
-              toast({
-                variant: 'destructive',
-                title: 'Kamera Tidak Didukung',
-                description: 'Browser Anda tidak mendukung akses kamera.',
-              });
-              setHasCameraPermission(false);
-              setIsCameraLoading(false);
-            }
-            return;
-          }
-          try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            if (isEffectMounted) {
-              setActiveStream(stream);
-              setHasCameraPermission(true);
-              console.log("Camera permission granted and stream acquired.");
-              if (videoRef.current) {
-                const videoElement = videoRef.current;
-                videoElement.srcObject = stream;
-                
-                let metadataLoaded = false;
-                const handleMetadataLoaded = () => {
-                  metadataLoaded = true;
-                  if (isEffectMounted) {
-                    console.log("Video metadata loaded.");
-                    setIsCameraLoading(false);
-                  }
-                };
-                videoElement.onloadedmetadata = handleMetadataLoaded;
-
-                videoElement.play()
-                  .then(() => {
-                    console.log("Video play attempted successfully.");
-                    // Fallback: If onloadedmetadata is too slow or doesn't fire,
-                    // but play() promise resolves, consider loading done.
-                    // This makes the UI responsive faster, handleTakePhoto will gate actual capture.
-                    if (isEffectMounted && !metadataLoaded) {
-                       // Check if video has dimensions after a short delay, if not, metadata might still be loading
-                       setTimeout(() => {
-                          if (isEffectMounted && !metadataLoaded && videoElement.videoWidth > 0) {
-                            console.log("Video play resolved, video has dimensions. Forcing loading to false as fallback.");
-                            setIsCameraLoading(false);
-                          } else if (isEffectMounted && !metadataLoaded) {
-                            console.log("Video play resolved, but video dimensions not yet available or metadata not loaded.");
-                            // It's possible onloadedmetadata will still fire. If not, spinner might persist.
-                            // For now, we will rely on onloadedmetadata or explicit error for isCameraLoading=false
-                          }
-                       }, 500); // Check after 500ms
-                    }
-                  })
-                  .catch(err => {
-                    console.error('Error playing video:', err);
-                    if (isEffectMounted) {
-                      setIsCameraLoading(false);
-                      setHasCameraPermission(false); // Assume play error might be related to deeper permission/access issue
-                       toast({
-                        variant: 'destructive',
-                        title: 'Gagal Memutar Video',
-                        description: 'Tidak dapat memulai feed kamera. Coba lagi atau periksa izin kamera.',
-                      });
-                    }
-                  });
-              } else {
-                if (isEffectMounted) setIsCameraLoading(false); // videoRef not available
-                console.log("videoRef not current when stream acquired.");
-              }
-            } else { 
-              stream.getTracks().forEach(track => track.stop()); // Cleanup if effect unmounted
-              console.log("Effect unmounted before camera could be fully set up.");
-            }
-          } catch (error) {
-            console.error('Error accessing camera:', error);
-            if (isEffectMounted) {
-              setHasCameraPermission(false);
-              toast({
-                variant: 'destructive',
-                title: 'Akses Kamera Ditolak',
-                description: 'Mohon aktifkan izin kamera di pengaturan browser Anda.',
-              });
-              setIsCameraLoading(false);
-            }
-          }
-        };
-        initializeCamera();
-      } else if (videoRef.current && !videoRef.current.srcObject && activeStream) {
-        // Re-attach stream if it exists but video element lost it (e.g. tab re-focus)
-        console.log("Re-attaching active stream to video element.");
-        videoRef.current.srcObject = activeStream;
-        videoRef.current.play().catch(err => console.warn("Error re-playing video:", err));
-        setIsCameraLoading(false); // Assume re-attaching is fast
-      } else if (activeStream) {
-        // Stream is active, video should be playing or ready
-        setIsCameraLoading(false);
-      }
-    } else { // Not in camera mode or scan mode
-      stopActiveStream();
-      if (isEffectMounted) {
-        setIsCameraLoading(false); 
-      }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast({
+        variant: 'destructive',
+        title: 'Kamera Tidak Didukung',
+        description: 'Browser Anda tidak mendukung akses kamera.',
+      });
+      setIsCameraLoading(false);
+      return;
     }
 
-    return () => {
-      isEffectMounted = false;
-      if (videoRef.current) {
-        videoRef.current.onloadedmetadata = null;
+    try {
+      const constraints: MediaStreamConstraints = { video: {} };
+      if (deviceId) {
+        (constraints.video as MediaTrackConstraints).deviceId = { exact: deviceId };
+      } else {
+        // Prioritaskan kamera belakang untuk scan awal
+        (constraints.video as MediaTrackConstraints).facingMode = 'environment';
       }
-      // stopActiveStream() is called when inputMode/scanTabActiveView changes, or on component unmount if needed by main cleanup
+      
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (err) {
+        // Jika environment gagal (misal tidak ada kamera belakang), coba default
+        if ((constraints.video as MediaTrackConstraints).facingMode === 'environment') {
+          console.warn("Gagal mendapatkan kamera 'environment', mencoba kamera default.");
+          (constraints.video as MediaTrackConstraints) = { facingMode: 'user' }; // Coba kamera depan
+           try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+           } catch (defaultErr) {
+             console.warn("Gagal mendapatkan kamera 'user', mencoba kamera default tanpa facingMode.");
+            (constraints.video as MediaTrackConstraints) = true; // Coba kamera default apa saja
+            stream = await navigator.mediaDevices.getUserMedia(constraints); // Ini akan error jika tidak ada kamera sama sekali / izin ditolak
+           }
+        } else {
+          throw err; // Lemparkan error asli jika bukan karena fallback facingMode
+        }
+      }
+
+      setActiveStream(stream);
+      setHasCameraPermission(true);
+
+      if (videoRef.current) {
+        const videoElement = videoRef.current;
+        videoElement.srcObject = stream;
+        videoElement.onloadedmetadata = () => {
+          console.log("Video metadata loaded.");
+          setIsCameraLoading(false);
+        };
+        await videoElement.play().catch(err => {
+          console.error('Error playing video:', err);
+          setIsCameraLoading(false); // Pastikan loading berhenti jika play gagal
+          // Mungkin perlu handle error di sini juga, misal toast
+        });
+      } else {
+        setIsCameraLoading(false);
+      }
+
+      // Populate available cameras
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      setAvailableCameras(videoDevices);
+
+      // Set selected device ID based on the current stream
+      const currentTrack = stream.getVideoTracks()[0];
+      if (currentTrack) {
+        const currentTrackSettings = currentTrack.getSettings();
+        if (currentTrackSettings.deviceId) {
+          setSelectedCameraDeviceId(currentTrackSettings.deviceId);
+        }
+      }
+
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      setHasCameraPermission(false);
+      toast({
+        variant: 'destructive',
+        title: 'Akses Kamera Ditolak',
+        description: 'Mohon aktifkan izin kamera atau periksa pengaturan browser Anda.',
+      });
+      setIsCameraLoading(false);
+    }
+  }, [stopActiveStream, toast]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (inputMode === 'scan' && scanTabActiveView === 'camera') {
+      if (!activeStream) { // Hanya inisialisasi jika belum ada stream aktif
+        console.log("Initializing camera for camera tab...");
+        startCameraStream(selectedCameraDeviceId);
+      } else if (videoRef.current && !videoRef.current.srcObject && activeStream) {
+        // Re-attach stream if element lost it
+        console.log("Re-attaching stream to video element.");
+        videoRef.current.srcObject = activeStream;
+        videoRef.current.play().catch(err => console.warn("Error re-playing video:", err));
+        setIsCameraLoading(false); 
+      } else {
+        // Stream sudah aktif, pastikan loading false
+        setIsCameraLoading(false);
+      }
+    } else {
+      stopActiveStream();
+      if (isMounted) {
+        setIsCameraLoading(true); // Set loading true saat keluar dari mode kamera, siap untuk init lagi
+      }
+    }
+    return () => {
+      isMounted = false;
+      // Cleanup stream saat komponen unmount atau mode berubah ditangani oleh stopActiveStream dan useEffect utama unmount
     };
-  }, [inputMode, scanTabActiveView, activeStream, toast, stopActiveStream]); // Removed cameraInitialized
+  }, [inputMode, scanTabActiveView, startCameraStream, activeStream, selectedCameraDeviceId]);
 
   // Cleanup stream on component unmount
   useEffect(() => {
@@ -279,19 +276,15 @@ export default function ScrapChefPage() {
       recognitionRef.current.stop();
     } else {
       try {
-        // Ensure microphone permission is implicitly checked by starting recognition
-        // For some browsers, a separate getUserMedia({audio:true}) might be needed first
-        // if direct start() doesn't prompt. But usually, start() handles it.
         recognitionRef.current.start();
       } catch (err) {
         console.error('Error starting speech recognition', err);
         let userMessage = "Akses mikrofon ditolak atau terjadi error. Mohon aktifkan di pengaturan browser Anda.";
-         if ((err as SpeechRecognitionErrorEvent || err as Event ).type === 'error') { // DOMError in some cases
+         if ((err as SpeechRecognitionErrorEvent || err as Event ).type === 'error') { 
             const speechError = err as SpeechRecognitionErrorEvent;
             if (speechError.error === 'not-allowed' || speechError.error === 'service-not-allowed') {
                  userMessage = "Akses mikrofon ditolak. Mohon aktifkan di pengaturan browser Anda.";
             } else if (speechError.error === 'no-speech') {
-                // This is handled by onresult/onerror usually, but catch if start() throws it
                 userMessage = "Tidak ada suara terdeteksi. Silakan coba lagi.";
             } else {
                 userMessage = `Gagal memulai pengenalan suara: ${speechError.error}`;
@@ -303,7 +296,6 @@ export default function ScrapChefPage() {
       }
     }
   };
-
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -329,9 +321,9 @@ export default function ScrapChefPage() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
 
-    if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0) {
+    if (video.readyState < video.HAVE_METADATA || video.videoWidth === 0 || video.videoHeight === 0 || !activeStream) {
       setError("Kamera belum siap atau feed video bermasalah. Mohon tunggu video termuat sepenuhnya dan coba lagi.");
-      toast({ variant: "destructive", title: "Kamera Belum Siap", description: "Feed video belum sepenuhnya dimuat. Tunggu beberapa saat dan coba lagi." });
+      toast({ variant: "destructive", title: "Kamera Belum Siap", description: "Feed video belum sepenuhnya dimuat atau stream tidak aktif. Tunggu beberapa saat dan coba lagi." });
       return;
     }
 
@@ -341,16 +333,26 @@ export default function ScrapChefPage() {
 
     if (context) {
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUri = canvas.toDataURL('image/png'); // Menggunakan PNG untuk kualitas lebih baik dari kamera
+      const dataUri = canvas.toDataURL('image/png');
       setImagePreview(dataUri);
       setSelectedFile(null); 
-      setScanTabActiveView('upload'); 
-      stopActiveStream(); 
+      setScanTabActiveView('upload'); // Pindah ke tampilan unggah untuk konsistensi pratinjau
+      // stopActiveStream(); // Stream akan berhenti karena scanTabActiveView berubah
       setError(null); 
       toast({ title: "Gambar Diambil!", description: "Gambar dari kamera berhasil diambil." });
     } else {
       setError("Gagal mengambil konteks canvas untuk memproses gambar.");
       toast({ variant: "destructive", title: "Error Pengambilan Gambar", description: "Tidak dapat memproses gambar dari kamera." });
+    }
+  };
+
+  const handleSwitchCamera = () => {
+    if (availableCameras.length > 1) {
+      const currentIndex = availableCameras.findIndex(cam => cam.deviceId === selectedCameraDeviceId);
+      const nextIndex = (currentIndex + 1) % availableCameras.length;
+      const newDeviceId = availableCameras[nextIndex].deviceId;
+      // setSelectedCameraDeviceId(newDeviceId); // Ini akan memicu useEffect
+      startCameraStream(newDeviceId); // Langsung panggil dengan device ID baru
     }
   };
 
@@ -422,8 +424,7 @@ export default function ScrapChefPage() {
         id: new Date().toISOString(),
         dateSaved: new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
         ingredientsInput: ingredientsText,
-        // imageUrl and dataAiHint are not explicitly set here, relying on potential future enhancements
-        // For now, they will be undefined when saving.
+        // imageUrl and dataAiHint are not explicitly set here
       };
 
       try {
@@ -512,7 +513,7 @@ export default function ScrapChefPage() {
                     variant={scanTabActiveView === 'upload' ? 'default' : 'outline'} 
                     onClick={() => {
                         setScanTabActiveView('upload');
-                        stopActiveStream(); // Stop camera if switching from camera view
+                        // stopActiveStream(); // Stream akan dihentikan oleh useEffect
                     }}
                     className="flex-1"
                   >
@@ -524,7 +525,7 @@ export default function ScrapChefPage() {
                       setScanTabActiveView('camera');
                       setImagePreview(null); 
                       setSelectedFile(null);
-                      // Initialization will be triggered by useEffect
+                      // Inisialisasi kamera akan dipicu oleh useEffect
                     }}
                     className="flex-1"
                   >
@@ -559,15 +560,20 @@ export default function ScrapChefPage() {
                           </AlertDescription>
                         </Alert>
                     )}
-
-                    <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission || !activeStream} className="w-full" data-ai-hint="capture ingredient photo">
-                      <Camera className="mr-2 h-4 w-4" /> Ambil Gambar
-                    </Button>
+                    <div className="flex space-x-2">
+                        <Button onClick={handleTakePhoto} disabled={isCameraLoading || !hasCameraPermission || !activeStream} className="flex-1" data-ai-hint="capture ingredient photo">
+                          <Camera className="mr-2 h-4 w-4" /> Ambil Gambar
+                        </Button>
+                        {availableCameras.length > 1 && hasCameraPermission && (
+                            <Button onClick={handleSwitchCamera} variant="outline" disabled={isCameraLoading || !activeStream}>
+                                <RefreshCw className="mr-2 h-4 w-4" /> Ganti Kamera
+                            </Button>
+                        )}
+                    </div>
                   </div>
                 )}
                 <canvas ref={canvasRef} className="hidden"></canvas> 
                 
-                {/* Tombol analisis muncul jika mode upload ATAU jika sudah ada imagePreview (dari kamera) */}
                 {(scanTabActiveView === 'upload' || imagePreview) && ( 
                   <Button onClick={handleAnalyzeImage} disabled={isLoadingIngredients || !imagePreview} className="w-full mt-4">
                     {isLoadingIngredients ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
@@ -725,5 +731,6 @@ export default function ScrapChefPage() {
     </div>
   );
 }
+    
 
     
